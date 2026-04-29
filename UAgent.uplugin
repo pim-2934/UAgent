@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.0.1",
+	"FriendlyName": "UAgent",
+	"Description": "AI agent for the Unreal Editor",
+	"Category": "AI",
+	"CreatedBy": "pim-2934",
+	"CreatedByURL": "https://github.com/pim-2934",
+	"DocsURL": "https://github.com/pim-2934/UAgent",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/pim-2934/UAgent/issues",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "UAgent",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

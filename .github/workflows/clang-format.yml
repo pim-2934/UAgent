@@ -1,0 +1,51 @@
+name: clang-format
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  clang-format-check:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-18 100
+          clang-format --version
+
+      - name: Collect changed C/C++ files
+        id: changed
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+          FILES=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- \
+            '*.cpp' '*.cc' '*.cxx' '*.c' \
+            '*.hpp' '*.hh' '*.hxx' '*.h' \
+            '*.inl' '*.ipp')
+          if [ -z "$FILES" ]; then
+            echo "No C/C++ files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changed files:"
+            echo "$FILES"
+            {
+              echo "has_files=true"
+              echo "files<<EOF"
+              echo "$FILES"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run clang-format (dry-run, fail on diff)
+        if: steps.changed.outputs.has_files == 'true'
+        run: |
+          echo "${{ steps.changed.outputs.files }}" | xargs clang-format --dry-run --Werror --style=file --fallback-style=LLVM
