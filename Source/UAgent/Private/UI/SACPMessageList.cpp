@@ -2,6 +2,7 @@
 
 #include "ChatMarkdown.h"
 
+#include "HAL/PlatformApplicationMisc.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -13,6 +14,28 @@
 #include "Widgets/Views/STableRow.h"
 
 #define LOCTEXT_NAMESPACE "UAgent"
+
+namespace {
+// Slate's text widgets in chat rows are either non-selectable (SRichTextBlock /
+// STextBlock used by the markdown renderer) or selectable in principle
+// (SMultiLineEditableText) but reliably swallowed by the parent STableRow's
+// mouse-event handling. A universal Copy button per row sidesteps both
+// problems and matches the pattern users expect from chat UIs.
+TSharedRef<SWidget> MakeCopyButton(const FACPChatMessageItemRef &Item) {
+  return SNew(SButton)
+      .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+      .ContentPadding(FMargin(2))
+      .ToolTipText(NSLOCTEXT("UAgent", "CopyMessageTip",
+                             "Copy this message to the clipboard"))
+      .OnClicked_Lambda([Item]() -> FReply {
+        FPlatformApplicationMisc::ClipboardCopy(*Item->Text);
+        return FReply::Handled();
+      })[SNew(SImage)
+             .Image(FAppStyle::Get().GetBrush("GenericCommands.Copy"))
+             .DesiredSizeOverride(FVector2D(14, 14))
+             .ColorAndOpacity(FSlateColor::UseForeground())];
+}
+} // namespace
 
 // Bodies of Agent and Tool rows mutate over the course of a turn (streaming
 // chunks; tool status transitions pending→in_progress→completed). The row is
@@ -105,6 +128,11 @@ SACPMessageList::MakeMessageRow(const FACPChatMessageItemRef &Item) {
                          return FAppStyle::Get().GetBrush("Icons.Warning");
                        })];
 
+    Header->AddSlot()
+        .AutoWidth()
+        .VAlign(VAlign_Center)
+        .Padding(FMargin(4, 0))[MakeCopyButton(Item)];
+
     Header->AddSlot().AutoWidth().VAlign(VAlign_Center)
         [SNew(SButton)
              .ButtonStyle(FAppStyle::Get(), "NoBorder")
@@ -142,10 +170,15 @@ SACPMessageList::MakeMessageRow(const FACPChatMessageItemRef &Item) {
                                      })];
   } else {
     Body->AddSlot().AutoHeight().Padding(
-        0, 0, 0, 4)[SNew(STextBlock)
-                        .Text_Lambda(LabelLambda)
-                        .ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f, 1.0f))
-                        .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
+        0, 0, 0,
+        4)[SNew(SHorizontalBox) +
+           SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+               [SNew(STextBlock)
+                    .Text_Lambda(LabelLambda)
+                    .ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f, 1.0f))
+                    .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))] +
+           SHorizontalBox::Slot().AutoWidth().VAlign(
+               VAlign_Center)[MakeCopyButton(Item)]];
   }
 
   FTextBlockStyle BodyTextStyle =
