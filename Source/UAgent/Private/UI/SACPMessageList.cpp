@@ -311,12 +311,12 @@ SACPMessageList::MakeProposalRow(const FACPChatMessageItemRef &Item) {
 
   TSharedRef<SVerticalBox> Body = SNew(SVerticalBox);
 
-  Body->AddSlot().AutoHeight().Padding(0, 0, 0, 4)
-      [SNew(STextBlock)
-           .Text(NSLOCTEXT("UAgent", "ProposalLabel",
-                           "missing tool proposed (dev mode)"))
-           .ColorAndOpacity(FLinearColor(0.55f, 0.85f, 0.65f, 1.0f))
-           .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
+  Body->AddSlot().AutoHeight().Padding(
+      0, 0, 0, 4)[SNew(STextBlock)
+                      .Text(NSLOCTEXT("UAgent", "ProposalLabel",
+                                      "missing tool proposed (dev mode)"))
+                      .ColorAndOpacity(FLinearColor(0.55f, 0.85f, 0.65f, 1.0f))
+                      .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
 
   Body->AddSlot().AutoHeight().Padding(
       0, 0, 0, 2)[SNew(STextBlock)
@@ -357,28 +357,28 @@ SACPMessageList::MakeProposalRow(const FACPChatMessageItemRef &Item) {
 
   // Accept / Skip / Cancel — hidden once resolved.
   TSharedRef<SHorizontalBox> Buttons = SNew(SHorizontalBox);
-  Buttons->AddSlot().AutoWidth().Padding(0, 0, 6, 0)
-      [SNew(SButton)
-           .Text(NSLOCTEXT("UAgent", "ProposalAccept", "Accept"))
-           .ToolTipText(NSLOCTEXT(
-               "UAgent", "ProposalAcceptTip",
-               "Save proposal sidecar and tell the agent to halt."))
-           .OnClicked_Lambda([this, ProposalId]() -> FReply {
-             OnProposalDecided.ExecuteIfBound(
-                 ProposalId, EProposalRowDecision::Accepted);
-             return FReply::Handled();
-           })];
-  Buttons->AddSlot().AutoWidth().Padding(0, 0, 6, 0)
-      [SNew(SButton)
-           .Text(NSLOCTEXT("UAgent", "ProposalSkip", "Skip"))
-           .ToolTipText(NSLOCTEXT(
-               "UAgent", "ProposalSkipTip",
-               "Let the agent continue with the existing tools."))
-           .OnClicked_Lambda([this, ProposalId]() -> FReply {
-             OnProposalDecided.ExecuteIfBound(ProposalId,
-                                              EProposalRowDecision::Skipped);
-             return FReply::Handled();
-           })];
+  Buttons->AddSlot().AutoWidth().Padding(
+      0, 0, 6, 0)[SNew(SButton)
+                      .Text(NSLOCTEXT("UAgent", "ProposalAccept", "Accept"))
+                      .ToolTipText(NSLOCTEXT(
+                          "UAgent", "ProposalAcceptTip",
+                          "Save proposal sidecar and tell the agent to halt."))
+                      .OnClicked_Lambda([this, ProposalId]() -> FReply {
+                        OnProposalDecided.ExecuteIfBound(
+                            ProposalId, EProposalRowDecision::Accepted);
+                        return FReply::Handled();
+                      })];
+  Buttons->AddSlot().AutoWidth().Padding(
+      0, 0, 6, 0)[SNew(SButton)
+                      .Text(NSLOCTEXT("UAgent", "ProposalSkip", "Skip"))
+                      .ToolTipText(NSLOCTEXT(
+                          "UAgent", "ProposalSkipTip",
+                          "Let the agent continue with the existing tools."))
+                      .OnClicked_Lambda([this, ProposalId]() -> FReply {
+                        OnProposalDecided.ExecuteIfBound(
+                            ProposalId, EProposalRowDecision::Skipped);
+                        return FReply::Handled();
+                      })];
   Buttons->AddSlot()
       .AutoWidth()[SNew(SButton)
                        .Text(NSLOCTEXT("UAgent", "ProposalCancel", "Cancel"))
@@ -445,45 +445,47 @@ SACPMessageList::MakeProposalReplayRow(const FACPChatMessageItemRef &Item) {
 
   TSharedRef<SVerticalBox> Body = SNew(SVerticalBox);
 
-  Body->AddSlot().AutoHeight().Padding(0, 0, 0, 4)
-      [SNew(STextBlock)
-           .Text(NSLOCTEXT("UAgent", "ProposalReplayLabel",
-                           "pending tool proposal — retry?"))
-           .ColorAndOpacity(FLinearColor(0.85f, 0.85f, 0.45f, 1.0f))
-           .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
-
   Body->AddSlot().AutoHeight().Padding(
-      0, 0, 0, 2)[SNew(STextBlock)
-                      .Text_Lambda([Item]() {
-                        return FText::Format(
-                            NSLOCTEXT("UAgent", "ProposalReplayName",
-                                      "Tool: {0}"),
-                            FText::FromString(Item->ProposedName));
-                      })
+      0, 0, 0, 4)[SNew(STextBlock)
+                      .Text(NSLOCTEXT("UAgent", "ProposalReplayLabel",
+                                      "pending tool proposal — retry?"))
+                      .ColorAndOpacity(FLinearColor(0.85f, 0.85f, 0.45f, 1.0f))
                       .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
 
   Body->AddSlot().AutoHeight().Padding(
-      0, 0, 0, 6)[SNew(STextBlock)
-                      .Text_Lambda([Item]() {
-                        return FText::Format(
-                            NSLOCTEXT("UAgent", "ProposalReplayPrompt",
-                                      "Original prompt:\n{0}"),
-                            FText::FromString(Item->Text));
-                      })
-                      .ColorAndOpacity(FLinearColor(0.75f, 0.75f, 0.75f, 1.0f))
-                      .AutoWrapText(true)];
+      0, 0, 0,
+      2)[SNew(STextBlock)
+             .Text_Lambda([Item]() {
+               return FText::Format(
+                   NSLOCTEXT("UAgent", "ProposalReplayName", "Tool: {0}"),
+                   FText::FromString(Item->ProposedName));
+             })
+             .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
+
+  Body->AddSlot().AutoHeight().Padding(
+      0, 0, 0,
+      6)[SNew(STextBlock)
+             .Text_Lambda([Item]() {
+               return FText::Format(NSLOCTEXT("UAgent", "ProposalReplayPrompt",
+                                              "Original prompt:\n{0}"),
+                                    FText::FromString(Item->Text));
+             })
+             .ColorAndOpacity(FLinearColor(0.75f, 0.75f, 0.75f, 1.0f))
+             .AutoWrapText(true)];
 
   TSharedRef<SHorizontalBox> Buttons = SNew(SHorizontalBox);
-  Buttons->AddSlot().AutoWidth().Padding(0, 0, 6, 0)
-      [SNew(SButton)
-           .Text(NSLOCTEXT("UAgent", "ProposalReplayRetry", "Retry"))
-           .ToolTipText(NSLOCTEXT(
-               "UAgent", "ProposalReplayRetryTip",
-               "Replay the saved prompt with the new tool now available."))
-           .OnClicked_Lambda([this, ProposalId]() -> FReply {
-             OnProposalReplayDecided.ExecuteIfBound(ProposalId, /*bRetry=*/true);
-             return FReply::Handled();
-           })];
+  Buttons->AddSlot().AutoWidth().Padding(
+      0, 0, 6,
+      0)[SNew(SButton)
+             .Text(NSLOCTEXT("UAgent", "ProposalReplayRetry", "Retry"))
+             .ToolTipText(NSLOCTEXT(
+                 "UAgent", "ProposalReplayRetryTip",
+                 "Replay the saved prompt with the new tool now available."))
+             .OnClicked_Lambda([this, ProposalId]() -> FReply {
+               OnProposalReplayDecided.ExecuteIfBound(ProposalId,
+                                                      /*bRetry=*/true);
+               return FReply::Handled();
+             })];
   Buttons->AddSlot().AutoWidth()
       [SNew(SButton)
            .Text(NSLOCTEXT("UAgent", "ProposalReplayDismiss", "Dismiss"))
@@ -506,11 +508,9 @@ SACPMessageList::MakeProposalReplayRow(const FACPChatMessageItemRef &Item) {
            .Text_Lambda([Item]() {
              switch (Item->ProposalState) {
              case FACPChatMessageItem::EProposalState::Replayed:
-               return NSLOCTEXT("UAgent", "ProposalReplayed",
-                                "↻ Replayed.");
+               return NSLOCTEXT("UAgent", "ProposalReplayed", "↻ Replayed.");
              case FACPChatMessageItem::EProposalState::Dismissed:
-               return NSLOCTEXT("UAgent", "ProposalDismissed",
-                                "✗ Dismissed.");
+               return NSLOCTEXT("UAgent", "ProposalDismissed", "✗ Dismissed.");
              default:
                return FText::GetEmpty();
              }

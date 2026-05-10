@@ -98,8 +98,7 @@ public:
     // principle leak through after a setting flip. Re-check defensively.
     if (!Common::IsDeveloperToolingEnabled()) {
       Complete(FToolResponse::Fail(
-          -32601,
-          TEXT("propose_missing_tool: developer tooling is disabled")));
+          -32601, TEXT("propose_missing_tool: developer tooling is disabled")));
       return;
     }
 
@@ -117,8 +116,8 @@ public:
     }
     if (!Params->TryGetStringField(TEXT("description"), Description) ||
         Description.Len() < 16) {
-      Complete(FToolResponse::InvalidParams(
-          TEXT("propose_missing_tool: 'description' is required (>=16 chars)")));
+      Complete(FToolResponse::InvalidParams(TEXT(
+          "propose_missing_tool: 'description' is required (>=16 chars)")));
       return;
     }
     if (!Params->TryGetStringField(TEXT("whyNeeded"), WhyNeeded) ||
@@ -161,8 +160,8 @@ public:
       FString SchemaType;
       (*InputSchemaPtr)->TryGetStringField(TEXT("type"), SchemaType);
       if (!SchemaType.Equals(TEXT("object"))) {
-        Complete(FToolResponse::InvalidParams(
-            TEXT("propose_missing_tool: 'inputSchema.type' must be \"object\"")));
+        Complete(FToolResponse::InvalidParams(TEXT(
+            "propose_missing_tool: 'inputSchema.type' must be \"object\"")));
         return;
       }
     }

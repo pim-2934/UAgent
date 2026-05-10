@@ -135,8 +135,7 @@ public:
    * caller passes in the FProposalRequest::Id so the same value lives on the
    * row, the sidecar, and the agent's tool result).
    */
-  FString AppendProposal(const FString &ProposalId,
-                         const FString &ProposedName,
+  FString AppendProposal(const FString &ProposalId, const FString &ProposedName,
                          const FString &ProposedDescription,
                          const FString &WhyNeeded, const FString &ArgsPreview);
 

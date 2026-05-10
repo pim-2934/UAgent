@@ -1054,8 +1054,7 @@ FString JsonForPreview(const TSharedPtr<FJsonObject> &Obj, int32 MaxChars) {
 
 // Convert an EProposalRowDecision (from SACPMessageList) into the
 // UAgent::EProposalOutcome the broker callback expects.
-UAgent::EProposalOutcome
-DecisionToOutcome(EProposalRowDecision D) {
+UAgent::EProposalOutcome DecisionToOutcome(EProposalRowDecision D) {
   switch (D) {
   case EProposalRowDecision::Accepted:
     return UAgent::EProposalOutcome::Accepted;
@@ -1118,16 +1117,16 @@ void SACPChatWindow::OnProposalRequested(
 
   FString ArgsPreview;
   if (Req.InputSchema.IsValid()) {
-    ArgsPreview = FString::Printf(
-        TEXT("inputSchema:\n%s"),
-        *JsonForPreview(Req.InputSchema, /*MaxChars=*/1200));
+    ArgsPreview =
+        FString::Printf(TEXT("inputSchema:\n%s"),
+                        *JsonForPreview(Req.InputSchema, /*MaxChars=*/1200));
   }
   if (Req.ExampleCall.IsValid()) {
     if (!ArgsPreview.IsEmpty())
       ArgsPreview += TEXT("\n\n");
-    ArgsPreview += FString::Printf(
-        TEXT("exampleCall:\n%s"),
-        *JsonForPreview(Req.ExampleCall, /*MaxChars=*/600));
+    ArgsPreview +=
+        FString::Printf(TEXT("exampleCall:\n%s"),
+                        *JsonForPreview(Req.ExampleCall, /*MaxChars=*/600));
   }
 
   MessageLog->AppendProposal(Req.Id, Req.Name, Req.Description, Req.WhyNeeded,
@@ -1251,8 +1250,7 @@ void SACPChatWindow::OnProposalReplayDecided(const FString &ProposalId,
   if (SidecarPath.IsEmpty())
     return;
 
-  const FString TerminalStatus =
-      bRetry ? TEXT("replayed") : TEXT("discarded");
+  const FString TerminalStatus = bRetry ? TEXT("replayed") : TEXT("discarded");
   if (!MarkSidecarStatus(SidecarPath, TerminalStatus)) {
     UE_LOG(UAgent::LogUAgent, Warning,
            TEXT("propose_missing_tool: failed to mark sidecar '%s' as '%s'"),

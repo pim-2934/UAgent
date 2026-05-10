@@ -29,8 +29,7 @@ enum class EProposalRowDecision : uint8 {
  * Fires when the user clicks Accept / Skip / Cancel on a Proposal row.
  * The id is the per-row UUID stamped in the FProposalRequest and the sidecar.
  */
-DECLARE_DELEGATE_TwoParams(FOnProposalDecided,
-                           const FString & /*ProposalId*/,
+DECLARE_DELEGATE_TwoParams(FOnProposalDecided, const FString & /*ProposalId*/,
                            EProposalRowDecision /*Decision*/);
 
 /**
@@ -64,8 +63,7 @@ private:
   TSharedRef<SWidget> MakeMessageRow(const FACPChatMessageItemRef &Item);
   TSharedRef<SWidget> MakePermissionRow(const FACPChatMessageItemRef &Item);
   TSharedRef<SWidget> MakeProposalRow(const FACPChatMessageItemRef &Item);
-  TSharedRef<SWidget>
-  MakeProposalReplayRow(const FACPChatMessageItemRef &Item);
+  TSharedRef<SWidget> MakeProposalReplayRow(const FACPChatMessageItemRef &Item);
   void HandleLogChanged();
   void HandleAgentTurnEnded();
   bool IsToolExpanded(const FString &ToolCallId) const;

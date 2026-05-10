@@ -38,8 +38,8 @@ FString GetToolsSourceDir() {
   if (!Plugin.IsValid()) {
     return FString();
   }
-  return FPaths::ConvertRelativePathToFull(
-      Plugin->GetBaseDir() / TEXT("Source/UAgent/Private/Tools"));
+  return FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() /
+                                           TEXT("Source/UAgent/Private/Tools"));
 }
 
 FString GetProposalsDir() {
