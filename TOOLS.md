@@ -89,3 +89,9 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 
 - **read_config** — Read a config entry via `GConfig`.
 - **write_config** — Write a config entry via `GConfig` (project-dir files only).
+
+## Developer (gated)
+
+Only registered when **both** `UUAgentSettings::bDeveloperMode` is true *and* the plugin's `Source/UAgent/Private/Tools/` directory is writable. Off by default. Toggling the setting requires an editor restart to take effect — tool registration runs once in `StartupModule`.
+
+- **propose_missing_tool** — Surface a clearly-missing UE5 editor tool when no existing one fits the user's intent. Pops a Proposal card in the chat (Accept / Skip / Cancel); on Accept, writes a sidecar JSON under `Saved/UAgent/Proposals/` carrying the proposed `name`/`description`/`whyNeeded`/`inputSchema`/`exampleCall` plus the originating user prompt, and tells the agent to halt. After the developer implements the new tool and restarts the editor, the next session shows a "pending tool proposal — retry?" banner that replays the saved prompt with the new tool now in `tools/list`. Cross-agent: portable to Claude, Codex, Gemini, etc. through standard MCP `tools/list` and the prompt-array standing instruction.

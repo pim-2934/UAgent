@@ -3,18 +3,25 @@
 #include "AssetRegistry/AssetData.h"
 #include "CoreMinimal.h"
 #include "Templates/Function.h"
+#include "Templates/SharedPointer.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/SCompoundWidget.h"
+
+class FJsonObject;
 
 namespace UAgent {
 class FACPClient;
 struct FSessionUpdate;
 struct FPermissionRequest;
+struct FProposalRequest;
 enum class EClientState : uint8;
 enum class EStopReason : uint8;
 enum class EPermissionOutcome : uint8;
+enum class EProposalOutcome : uint8;
 struct FContentBlock;
 } // namespace UAgent
+
+enum class EProposalRowDecision : uint8;
 
 class FChatMessageLog;
 class SACPContextStrip;
@@ -80,6 +87,26 @@ private:
   /** Routed from SACPMessageList when the user clicks Accept/Cancel. */
   void OnPermissionRowDecided(const FString &PermissionId, bool bAllow);
 
+  /** ProposalBroker handler — pushes a Proposal row to the log and remembers
+   * the completion callback against the proposal id. */
+  void OnProposalRequested(const UAgent::FProposalRequest &Req,
+                           TFunction<void(UAgent::EProposalOutcome)> Complete);
+
+  /** Routed from SACPMessageList when the developer clicks
+   * Accept/Skip/Cancel on a Proposal row. Writes the sidecar JSON on Accept
+   * before resolving the broker callback so a successful response means the
+   * file is on disk. */
+  void OnProposalRowDecided(const FString &ProposalId,
+                            EProposalRowDecision Decision);
+
+  /** Routed from SACPMessageList when the developer clicks Retry/Dismiss
+   * on a ProposalReplay banner. */
+  void OnProposalReplayDecided(const FString &ProposalId, bool bRetry);
+
+  /** Scan Saved/UAgent/Proposals on session start and append a banner per
+   * pending sidecar. No-op when the developer gate is closed. */
+  void ScanForPendingProposals();
+
 private:
   TSharedPtr<UAgent::FACPClient> Client;
   TSharedPtr<FChatMessageLog> MessageLog;
@@ -96,6 +123,30 @@ private:
   // when the chat window tears down (we deny any leftovers so the agent
   // isn't left waiting).
   TMap<FString, TFunction<void(UAgent::EPermissionOutcome)>> PendingPermissions;
+
+  // Pending proposal callbacks keyed by FProposalRequest::Id (also the row
+  // id and the sidecar's id). Same survival/termination story as
+  // PendingPermissions. We hold both the callback AND the original request —
+  // the callback resolves the agent, the request carries InputSchema /
+  // ExampleCall fields the chat row doesn't itself store, which the sidecar
+  // JSON needs in full so the developer can implement the proposed tool.
+  struct FPendingProposal {
+    TFunction<void(UAgent::EProposalOutcome)> Complete;
+    TSharedPtr<FJsonObject> InputSchema;
+    TSharedPtr<FJsonObject> ExampleCall;
+    bool bIsReadOnly = false;
+  };
+  TMap<FString, FPendingProposal> PendingProposals;
+
+  // Captured at the start of OnSendClicked so a halt-during-this-turn
+  // proposal can stamp the saved-prompt text into the sidecar JSON for
+  // next-session replay.
+  FString LastUserPromptText;
+
+  // Originating-prompt UUID stamped on every proposal sidecar from the same
+  // turn. Lets multi-proposal turns be marked replayed/discarded together
+  // when the developer resolves any one of them.
+  FString CurrentTurnId;
 
   TSharedPtr<SHorizontalBox> AgentSettingsContainer;
 

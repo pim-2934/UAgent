@@ -10,12 +10,37 @@ struct FSessionUpdate;
 
 /** Single entry in the chat transcript. */
 struct FACPChatMessageItem {
-  enum class ERole : uint8 { User, Agent, Tool, System, Permission };
+  enum class ERole : uint8 {
+    User,
+    Agent,
+    Tool,
+    System,
+    Permission,
+    /** Developer-mode card from propose_missing_tool. Three buttons:
+     * Accept (sidecar + halt), Skip (continue), Cancel (stop turn). */
+    Proposal,
+    /** Banner row appended on session start when pending proposal sidecars
+     * exist on disk. Two buttons: Retry (replay saved prompt) / Dismiss
+     * (mark sidecar discarded). */
+    ProposalReplay,
+  };
 
   // Lifecycle of a Permission row:
   //   Pending — buttons are live; user hasn't clicked yet.
   //   Allowed/Denied — terminal; buttons hide and the row shows the outcome.
   enum class EPermissionState : uint8 { Pending, Allowed, Denied };
+
+  // Lifecycle of a Proposal / ProposalReplay row. Pending → one of the three
+  // terminal states; SACPMessageList flips buttons off and shows an outcome
+  // line keyed off this enum.
+  enum class EProposalState : uint8 {
+    Pending,
+    Accepted,
+    Skipped,
+    Cancelled,
+    Replayed,
+    Dismissed,
+  };
 
   ERole Role = ERole::User;
   FString Text;
@@ -34,6 +59,19 @@ struct FACPChatMessageItem {
   FString PermissionToolKind;
   FString PermissionArgsPreview;
   EPermissionState PermissionState = EPermissionState::Pending;
+
+  // Proposal-row payload. Only meaningful when Role == Proposal or
+  // ProposalReplay. ProposalId is the stable per-row id (matches the
+  // FProposalRequest::Id and the sidecar JSON's `id`).
+  FString ProposalId;
+  FString ProposedName;
+  FString ProposedDescription;
+  FString ProposalWhyNeeded;
+  FString ProposalArgsPreview;
+  /** For ProposalReplay rows only — sidecar absolute path so the chat window
+   * can mark `status: replayed` / `status: discarded` without re-scanning. */
+  FString ProposalSidecarPath;
+  EProposalState ProposalState = EProposalState::Pending;
 
   // True once the message is settled (user/tool/system always start true; an
   // agent message stays false while its turn is streaming and flips true when
@@ -91,6 +129,31 @@ public:
    * if no row matches the id. */
   void SetPermissionState(const FString &PermissionId,
                           FACPChatMessageItem::EPermissionState NewState);
+
+  /**
+   * Proposal card from propose_missing_tool. Returns a stable per-row id (the
+   * caller passes in the FProposalRequest::Id so the same value lives on the
+   * row, the sidecar, and the agent's tool result).
+   */
+  FString AppendProposal(const FString &ProposalId,
+                         const FString &ProposedName,
+                         const FString &ProposedDescription,
+                         const FString &WhyNeeded, const FString &ArgsPreview);
+
+  /**
+   * Pending-proposal banner row shown on session start when a sidecar from a
+   * prior session is still in `status:pending`. SidecarPath lets the click
+   * handler mark the file replayed / discarded without re-scanning.
+   */
+  FString AppendProposalReplay(const FString &ProposalId,
+                               const FString &ProposedName,
+                               const FString &OriginatingPrompt,
+                               const FString &SidecarPath);
+
+  /** Flip a Proposal / ProposalReplay row to a terminal state and broadcast
+   * OnChanged. No-op if no row matches the id. */
+  void SetProposalState(const FString &ProposalId,
+                        FACPChatMessageItem::EProposalState NewState);
 
   /**
    * Routes an inbound session update to AppendAgentChunk / AppendTool /

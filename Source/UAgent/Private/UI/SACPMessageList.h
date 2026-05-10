@@ -15,6 +15,32 @@
 DECLARE_DELEGATE_TwoParams(FOnPermissionDecided,
                            const FString & /*PermissionId*/, bool /*bAllow*/);
 
+/** Outcome the user picked on a propose_missing_tool card. Three buttons map
+ * onto Accepted (sidecar + halt), Skipped (let agent continue), Cancelled
+ * (stop turn without sidecar). Mirrors UAgent::EProposalOutcome but kept
+ * widget-side to avoid pulling the Tools/Developer header into UI code. */
+enum class EProposalRowDecision : uint8 {
+  Accepted,
+  Skipped,
+  Cancelled,
+};
+
+/**
+ * Fires when the user clicks Accept / Skip / Cancel on a Proposal row.
+ * The id is the per-row UUID stamped in the FProposalRequest and the sidecar.
+ */
+DECLARE_DELEGATE_TwoParams(FOnProposalDecided,
+                           const FString & /*ProposalId*/,
+                           EProposalRowDecision /*Decision*/);
+
+/**
+ * Fires when the user clicks Retry / Dismiss on a ProposalReplay banner.
+ * bRetry true → chat window replays the saved prompt; false → mark sidecar
+ * discarded.
+ */
+DECLARE_DELEGATE_TwoParams(FOnProposalReplayDecided,
+                           const FString & /*ProposalId*/, bool /*bRetry*/);
+
 /**
  * Virtualized list view over an FChatMessageLog. Subscribes to the log's
  * OnChanged delegate and reissues `RequestListRefresh` + scroll-into-view on
@@ -26,6 +52,8 @@ class SACPMessageList : public SCompoundWidget {
 public:
   SLATE_BEGIN_ARGS(SACPMessageList) {}
   SLATE_EVENT(FOnPermissionDecided, OnPermissionDecided)
+  SLATE_EVENT(FOnProposalDecided, OnProposalDecided)
+  SLATE_EVENT(FOnProposalReplayDecided, OnProposalReplayDecided)
   SLATE_END_ARGS()
 
   void Construct(const FArguments &InArgs, TSharedRef<FChatMessageLog> InLog);
@@ -35,6 +63,9 @@ private:
                                       const TSharedRef<STableViewBase> &Owner);
   TSharedRef<SWidget> MakeMessageRow(const FACPChatMessageItemRef &Item);
   TSharedRef<SWidget> MakePermissionRow(const FACPChatMessageItemRef &Item);
+  TSharedRef<SWidget> MakeProposalRow(const FACPChatMessageItemRef &Item);
+  TSharedRef<SWidget>
+  MakeProposalReplayRow(const FACPChatMessageItemRef &Item);
   void HandleLogChanged();
   void HandleAgentTurnEnded();
   bool IsToolExpanded(const FString &ToolCallId) const;
@@ -57,4 +88,6 @@ private:
   int32 ScrollCatchupFramesLeft = 0;
   bool bPinToBottom = true;
   FOnPermissionDecided OnPermissionDecided;
+  FOnProposalDecided OnProposalDecided;
+  FOnProposalReplayDecided OnProposalReplayDecided;
 };

@@ -7,9 +7,16 @@
 #include "SACPContextStrip.h"
 #include "SACPMentionPicker.h"
 #include "SACPMessageList.h"
+#include "Tools/Common/DeveloperGate.h"
+#include "Tools/Developer/ProposalBroker.h"
 #include "Tools/Session/PermissionBroker.h"
 #include "UAgent.h"
 #include "UAgentSettings.h"
+
+#include "Dom/JsonObject.h"
+#include "HAL/FileManager.h"
+#include "Misc/Guid.h"
+#include "Serialization/JsonReader.h"
 
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -78,7 +85,11 @@ void SACPChatWindow::Construct(const FArguments &InArgs) {
 
   SAssignNew(MessageList, SACPMessageList, MessageLog.ToSharedRef())
       .OnPermissionDecided(FOnPermissionDecided::CreateSP(
-          this, &SACPChatWindow::OnPermissionRowDecided));
+          this, &SACPChatWindow::OnPermissionRowDecided))
+      .OnProposalDecided(FOnProposalDecided::CreateSP(
+          this, &SACPChatWindow::OnProposalRowDecided))
+      .OnProposalReplayDecided(FOnProposalReplayDecided::CreateSP(
+          this, &SACPChatWindow::OnProposalReplayDecided));
 
   // Route the agent's permission requests through the chat UI. Unbound on
   // teardown so a closed tab can't dangle the agent.
@@ -91,6 +102,21 @@ void SACPChatWindow::Construct(const FArguments &InArgs) {
         } else if (Complete) {
           // Tab gone — deny rather than silently approving.
           Complete(UAgent::EPermissionOutcome::Deny);
+        }
+      });
+
+  // Same shape for proposals — installed unconditionally so a flip of
+  // bDeveloperMode mid-session doesn't leave a broker without a handler.
+  // The tool itself is registration-gated, so when the gate is closed the
+  // broker is never asked.
+  UAgent::FProposalBroker::Get().SetHandler(
+      [WeakSelf = TWeakPtr<SACPChatWindow>(SharedThis(this))](
+          const UAgent::FProposalRequest &Req,
+          TFunction<void(UAgent::EProposalOutcome)> Complete) {
+        if (TSharedPtr<SACPChatWindow> Self = WeakSelf.Pin()) {
+          Self->OnProposalRequested(Req, MoveTemp(Complete));
+        } else if (Complete) {
+          Complete(UAgent::EProposalOutcome::Cancelled);
         }
       });
 
@@ -109,9 +135,10 @@ void SACPChatWindow::Construct(const FArguments &InArgs) {
 }
 
 SACPChatWindow::~SACPChatWindow() {
-  // Drop the broker handler first so a destruction-time agent request can't
+  // Drop the broker handlers first so a destruction-time agent request can't
   // re-enter into a half-destroyed window.
   UAgent::FPermissionBroker::Get().SetHandler({});
+  UAgent::FProposalBroker::Get().SetHandler({});
 
   // Anything still pending is left unanswered — the agent treats no response
   // as cancelled when the transport dies, but be explicit so we never leak.
@@ -120,6 +147,12 @@ SACPChatWindow::~SACPChatWindow() {
       KV.Value(UAgent::EPermissionOutcome::Deny);
   }
   PendingPermissions.Reset();
+
+  for (auto &KV : PendingProposals) {
+    if (KV.Value.Complete)
+      KV.Value.Complete(UAgent::EProposalOutcome::Cancelled);
+  }
+  PendingProposals.Reset();
 
   if (Client.IsValid()) {
     Client->Stop();
@@ -452,15 +485,22 @@ bool SACPChatWindow::IsSendEnabled() const {
 // ─── Session control ────────────────────────────────────────────────────────
 
 void SACPChatWindow::StartSession() {
-  // Resolve any in-flight permission prompts before resetting the log — the
-  // outgoing transport is about to die and the agent will never get our
-  // answer anyway, but if the callback ever fires it must not address an
-  // index in the freshly-reset log.
+  // Resolve any in-flight permission/proposal prompts before resetting the
+  // log — the outgoing transport is about to die and the agent will never
+  // get our answer anyway, but if the callback ever fires it must not
+  // address an index in the freshly-reset log.
   for (auto &KV : PendingPermissions) {
     if (KV.Value)
       KV.Value(UAgent::EPermissionOutcome::Deny);
   }
   PendingPermissions.Reset();
+
+  for (auto &KV : PendingProposals) {
+    if (KV.Value.Complete)
+      KV.Value.Complete(UAgent::EProposalOutcome::Cancelled);
+  }
+  PendingProposals.Reset();
+  UAgent::FProposalBroker::Get().ResetTurn();
 
   if (MessageLog.IsValid())
     MessageLog->Reset();
@@ -515,6 +555,10 @@ void SACPChatWindow::StartSession() {
 
   Client->Start(LaunchCommand, LaunchArgs,
                 FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+
+  // Surface any pending proposals from prior sessions. Banners are appended
+  // to the now-empty log so they layer above the agent's first message.
+  ScanForPendingProposals();
 }
 
 FReply SACPChatWindow::OnNewSessionClicked() {
@@ -723,7 +767,35 @@ FReply SACPChatWindow::OnSendClicked() {
   if (UserText.IsEmpty())
     return FReply::Handled();
 
+  // New turn — clear the per-turn proposal guard and stamp a fresh id so any
+  // sidecars written during this turn can be grouped together for replay.
+  UAgent::FProposalBroker::Get().ResetTurn();
+  CurrentTurnId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+  LastUserPromptText = UserText;
+
   TArray<UAgent::FContentBlock> Blocks = BuildContextBlocks();
+
+  // In developer mode, prepend the propose_missing_tool standing instruction.
+  // Index-0 placement keeps the policy ahead of large auto-context blocks
+  // (Blueprint summaries can run thousands of chars), so the agent can't
+  // lose it to mid-context attention drop. Suppressed when the gate is
+  // closed — same condition that suppresses the tool's registration.
+  if (UAgent::Common::IsDeveloperToolingEnabled()) {
+    static const FString StandingInstruction = TEXT(
+        "Before acting on the user's request, check whether the registered "
+        "tools (visible in tools/list) cover the intent. If a clearly-"
+        "missing tool would make the task tractable AND no existing tool "
+        "plausibly fits, call propose_missing_tool with name, description, "
+        "inputSchema, whyNeeded, and exampleCall — then STOP. Do not "
+        "improvise around the gap or call alternative tools. Bias toward "
+        "existing tools: only propose when improvising would produce a "
+        "worse outcome than halting. Never propose a tool that already "
+        "exists. Do not call propose_missing_tool more than once per turn. "
+        "If its result includes halt:true, end the turn immediately.");
+    Blocks.Insert(UAgent::FContentBlock::MakeText(StandingInstruction),
+                  /*Index=*/0);
+  }
+
   Blocks.Add(UAgent::FContentBlock::MakeText(UserText));
 
   TArray<FAssetData> VisibleContexts;
@@ -900,6 +972,10 @@ void SACPChatWindow::OnSessionUpdateReceived(
 void SACPChatWindow::OnPromptDone(UAgent::EStopReason /*Reason*/,
                                   FString ErrorOrEmpty) {
   MessageLog->EndAgentTurn();
+  // Defensive — the per-turn guard should already be cleared by the next
+  // OnSendClicked, but resetting at end-of-turn keeps the invariant that a
+  // proposal from a previous turn never leaks into a new one.
+  UAgent::FProposalBroker::Get().ResetTurn();
   if (!ErrorOrEmpty.IsEmpty()) {
     MessageLog->AppendSystem(
         FString::Printf(TEXT("Prompt failed: %s"), *ErrorOrEmpty),
@@ -957,6 +1033,324 @@ void SACPChatWindow::OnPermissionRowDecided(const FString &PermissionId,
   if (Complete) {
     Complete(bAllow ? UAgent::EPermissionOutcome::Allow
                     : UAgent::EPermissionOutcome::Deny);
+  }
+}
+
+// ─── Proposal flow ──────────────────────────────────────────────────────────
+
+namespace {
+// Render a JsonObject as compact JSON, truncated for display in a chat row.
+FString JsonForPreview(const TSharedPtr<FJsonObject> &Obj, int32 MaxChars) {
+  if (!Obj.IsValid())
+    return FString();
+  FString Out;
+  TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+  FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer);
+  if (Out.Len() > MaxChars) {
+    Out = Out.Left(MaxChars) + TEXT("\n…(truncated)");
+  }
+  return Out;
+}
+
+// Convert an EProposalRowDecision (from SACPMessageList) into the
+// UAgent::EProposalOutcome the broker callback expects.
+UAgent::EProposalOutcome
+DecisionToOutcome(EProposalRowDecision D) {
+  switch (D) {
+  case EProposalRowDecision::Accepted:
+    return UAgent::EProposalOutcome::Accepted;
+  case EProposalRowDecision::Skipped:
+    return UAgent::EProposalOutcome::Skipped;
+  case EProposalRowDecision::Cancelled:
+  default:
+    return UAgent::EProposalOutcome::Cancelled;
+  }
+}
+
+// Sidecar filename: "<UTC-timestamp>-<sanitized-name>.json", timestamp first
+// for natural lexicographic ordering when the chat scans pending proposals.
+FString SanitizeForFilename(const FString &In) {
+  FString Out;
+  Out.Reserve(In.Len());
+  for (TCHAR C : In) {
+    if (FChar::IsAlnum(C) || C == TEXT('_') || C == TEXT('-')) {
+      Out.AppendChar(C);
+    }
+  }
+  return Out.IsEmpty() ? TEXT("tool") : Out;
+}
+
+bool LoadJsonFile(const FString &Path, TSharedPtr<FJsonObject> &OutObj) {
+  FString Json;
+  if (!FFileHelper::LoadFileToString(Json, *Path)) {
+    return false;
+  }
+  TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+  return FJsonSerializer::Deserialize(Reader, OutObj) && OutObj.IsValid();
+}
+
+bool SaveJsonFile(const FString &Path, const TSharedRef<FJsonObject> &Obj) {
+  FString Json;
+  TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+  FJsonSerializer::Serialize(Obj, Writer);
+  return FFileHelper::SaveStringToFile(
+      Json, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
+// Update the `status` field of a sidecar in-place. Returns true on success.
+bool MarkSidecarStatus(const FString &Path, const FString &NewStatus) {
+  TSharedPtr<FJsonObject> Obj;
+  if (!LoadJsonFile(Path, Obj))
+    return false;
+  Obj->SetStringField(TEXT("status"), NewStatus);
+  return SaveJsonFile(Path, Obj.ToSharedRef());
+}
+} // namespace
+
+void SACPChatWindow::OnProposalRequested(
+    const UAgent::FProposalRequest &Req,
+    TFunction<void(UAgent::EProposalOutcome)> Complete) {
+  if (!MessageLog.IsValid()) {
+    if (Complete)
+      Complete(UAgent::EProposalOutcome::Cancelled);
+    return;
+  }
+
+  FString ArgsPreview;
+  if (Req.InputSchema.IsValid()) {
+    ArgsPreview = FString::Printf(
+        TEXT("inputSchema:\n%s"),
+        *JsonForPreview(Req.InputSchema, /*MaxChars=*/1200));
+  }
+  if (Req.ExampleCall.IsValid()) {
+    if (!ArgsPreview.IsEmpty())
+      ArgsPreview += TEXT("\n\n");
+    ArgsPreview += FString::Printf(
+        TEXT("exampleCall:\n%s"),
+        *JsonForPreview(Req.ExampleCall, /*MaxChars=*/600));
+  }
+
+  MessageLog->AppendProposal(Req.Id, Req.Name, Req.Description, Req.WhyNeeded,
+                             ArgsPreview);
+
+  FPendingProposal Pending;
+  Pending.Complete = MoveTemp(Complete);
+  Pending.InputSchema = Req.InputSchema;
+  Pending.ExampleCall = Req.ExampleCall;
+  Pending.bIsReadOnly = Req.bIsReadOnly;
+  PendingProposals.Add(Req.Id, MoveTemp(Pending));
+}
+
+void SACPChatWindow::OnProposalRowDecided(const FString &ProposalId,
+                                          EProposalRowDecision Decision) {
+  FPendingProposal Pending;
+  if (!PendingProposals.RemoveAndCopyValue(ProposalId, Pending)) {
+    return;
+  }
+
+  // On Accept, write the sidecar before invoking the broker callback so a
+  // successful agent response means the file is on disk.
+  if (Decision == EProposalRowDecision::Accepted) {
+    // Pull display fields off the chat row; pull schema/example off the
+    // pending struct (which holds the original FProposalRequest payload —
+    // the row never stores those parsed JSON objects).
+    FString ProposedName, Description, WhyNeeded;
+    for (const FACPChatMessageItemRef &Item : MessageLog->GetMessages()) {
+      if (Item->Role == FACPChatMessageItem::ERole::Proposal &&
+          Item->ProposalId == ProposalId) {
+        ProposedName = Item->ProposedName;
+        Description = Item->ProposedDescription;
+        WhyNeeded = Item->ProposalWhyNeeded;
+        break;
+      }
+    }
+
+    const FString Timestamp =
+        FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+    const FString FileName = FString::Printf(
+        TEXT("%s-%s.json"), *Timestamp, *SanitizeForFilename(ProposedName));
+    const FString OutPath = UAgent::Common::GetProposalsDir() / FileName;
+
+    TSharedRef<FJsonObject> Sidecar = MakeShared<FJsonObject>();
+    Sidecar->SetNumberField(TEXT("schemaVersion"), 1);
+    Sidecar->SetStringField(TEXT("id"), ProposalId);
+    Sidecar->SetStringField(TEXT("turnId"), CurrentTurnId);
+    Sidecar->SetStringField(TEXT("createdAtUtc"),
+                            FDateTime::UtcNow().ToIso8601());
+
+    TSharedRef<FJsonObject> Proposal = MakeShared<FJsonObject>();
+    Proposal->SetStringField(TEXT("name"), ProposedName);
+    Proposal->SetStringField(TEXT("description"), Description);
+    Proposal->SetStringField(TEXT("whyNeeded"), WhyNeeded);
+    Proposal->SetBoolField(TEXT("isReadOnly"), Pending.bIsReadOnly);
+    if (Pending.InputSchema.IsValid()) {
+      Proposal->SetObjectField(TEXT("inputSchema"), Pending.InputSchema);
+    }
+    if (Pending.ExampleCall.IsValid()) {
+      Proposal->SetObjectField(TEXT("exampleCall"), Pending.ExampleCall);
+    }
+    Sidecar->SetObjectField(TEXT("proposal"), Proposal);
+
+    TSharedRef<FJsonObject> Origin = MakeShared<FJsonObject>();
+    Origin->SetStringField(TEXT("text"), LastUserPromptText);
+    Sidecar->SetObjectField(TEXT("originatingPrompt"), Origin);
+
+    Sidecar->SetStringField(TEXT("status"), TEXT("pending"));
+
+    if (!SaveJsonFile(OutPath, Sidecar)) {
+      UE_LOG(UAgent::LogUAgent, Warning,
+             TEXT("propose_missing_tool: failed to write sidecar to '%s' — "
+                  "downgrading Accept to Cancel."),
+             *OutPath);
+      MessageLog->SetProposalState(
+          ProposalId, FACPChatMessageItem::EProposalState::Cancelled);
+      if (Pending.Complete)
+        Pending.Complete(UAgent::EProposalOutcome::Cancelled);
+      return;
+    }
+
+    MessageLog->AppendSystem(
+        FString::Printf(TEXT("Proposal saved: %s"), *OutPath),
+        FLinearColor(0.5f, 0.85f, 0.5f, 1.0f));
+  }
+
+  FACPChatMessageItem::EProposalState NewState =
+      FACPChatMessageItem::EProposalState::Cancelled;
+  switch (Decision) {
+  case EProposalRowDecision::Accepted:
+    NewState = FACPChatMessageItem::EProposalState::Accepted;
+    break;
+  case EProposalRowDecision::Skipped:
+    NewState = FACPChatMessageItem::EProposalState::Skipped;
+    break;
+  case EProposalRowDecision::Cancelled:
+  default:
+    NewState = FACPChatMessageItem::EProposalState::Cancelled;
+    break;
+  }
+  MessageLog->SetProposalState(ProposalId, NewState);
+
+  if (Pending.Complete) {
+    Pending.Complete(DecisionToOutcome(Decision));
+  }
+}
+
+void SACPChatWindow::OnProposalReplayDecided(const FString &ProposalId,
+                                             bool bRetry) {
+  // Find the row to grab the sidecar path + saved prompt.
+  FString SidecarPath;
+  FString SavedPrompt;
+  for (const FACPChatMessageItemRef &Item : MessageLog->GetMessages()) {
+    if (Item->Role == FACPChatMessageItem::ERole::ProposalReplay &&
+        Item->ProposalId == ProposalId) {
+      SidecarPath = Item->ProposalSidecarPath;
+      SavedPrompt = Item->Text;
+      break;
+    }
+  }
+  if (SidecarPath.IsEmpty())
+    return;
+
+  const FString TerminalStatus =
+      bRetry ? TEXT("replayed") : TEXT("discarded");
+  if (!MarkSidecarStatus(SidecarPath, TerminalStatus)) {
+    UE_LOG(UAgent::LogUAgent, Warning,
+           TEXT("propose_missing_tool: failed to mark sidecar '%s' as '%s'"),
+           *SidecarPath, *TerminalStatus);
+  }
+
+  MessageLog->SetProposalState(
+      ProposalId, bRetry ? FACPChatMessageItem::EProposalState::Replayed
+                         : FACPChatMessageItem::EProposalState::Dismissed);
+
+  if (bRetry && InputBox.IsValid() && !SavedPrompt.IsEmpty()) {
+    InputBox->SetText(FText::FromString(SavedPrompt));
+    // The developer can edit the prompt before submitting if they want; we
+    // intentionally don't auto-send so they can inspect tool availability
+    // first via /tools or by glancing at the chat.
+    FSlateApplication::Get().SetKeyboardFocus(InputBox);
+  }
+}
+
+void SACPChatWindow::ScanForPendingProposals() {
+  if (!UAgent::Common::IsDeveloperToolingEnabled()) {
+    return;
+  }
+  if (!MessageLog.IsValid())
+    return;
+
+  const FString Dir = UAgent::Common::GetProposalsDir();
+  TArray<FString> Files;
+  IFileManager::Get().FindFiles(Files, *(Dir / TEXT("*.json")), /*Files=*/true,
+                                /*Dirs=*/false);
+
+  // Files are sorted lexicographically by name; our timestamp-prefixed
+  // filenames make that chronological order. Scan the whole list, pick the
+  // pending entries, and (cheaply) prune terminal-state entries beyond the
+  // most recent 50 to keep the directory bounded over time.
+  Files.Sort();
+
+  TArray<FString> TerminalEntries;
+  int32 PendingShown = 0;
+
+  for (const FString &Name : Files) {
+    const FString FullPath = Dir / Name;
+    TSharedPtr<FJsonObject> Obj;
+    if (!LoadJsonFile(FullPath, Obj)) {
+      continue;
+    }
+    int32 Schema = 0;
+    Obj->TryGetNumberField(TEXT("schemaVersion"), Schema);
+    if (Schema != 1)
+      continue;
+
+    FString Status;
+    Obj->TryGetStringField(TEXT("status"), Status);
+    if (Status != TEXT("pending")) {
+      TerminalEntries.Add(FullPath);
+      continue;
+    }
+
+    FString Id;
+    Obj->TryGetStringField(TEXT("id"), Id);
+    const TSharedPtr<FJsonObject> *ProposalObj = nullptr;
+    Obj->TryGetObjectField(TEXT("proposal"), ProposalObj);
+    FString ProposedName;
+    if (ProposalObj && ProposalObj->IsValid())
+      (*ProposalObj)->TryGetStringField(TEXT("name"), ProposedName);
+
+    const TSharedPtr<FJsonObject> *OriginObj = nullptr;
+    Obj->TryGetObjectField(TEXT("originatingPrompt"), OriginObj);
+    FString OriginText;
+    if (OriginObj && OriginObj->IsValid())
+      (*OriginObj)->TryGetStringField(TEXT("text"), OriginText);
+
+    if (Id.IsEmpty() || OriginText.IsEmpty()) {
+      // Defensive — incomplete sidecar, skip rather than crash.
+      continue;
+    }
+
+    if (PendingShown == 0) {
+      MessageLog->AppendSystem(
+          TEXT("Pending tool proposals from a prior session — Retry to "
+               "replay the prompt with the new tool, or Dismiss."),
+          FLinearColor(0.85f, 0.85f, 0.45f, 1.0f));
+    }
+    MessageLog->AppendProposalReplay(Id, ProposedName, OriginText, FullPath);
+    ++PendingShown;
+  }
+
+  // LRU prune of terminal-state files beyond N=50 most recent. Files
+  // sorted ascending by timestamp → drop the oldest. Cheap; runs once per
+  // session start.
+  constexpr int32 KeepTerminal = 50;
+  if (TerminalEntries.Num() > KeepTerminal) {
+    const int32 ToDelete = TerminalEntries.Num() - KeepTerminal;
+    for (int32 i = 0; i < ToDelete; ++i) {
+      IFileManager::Get().Delete(*TerminalEntries[i],
+                                 /*RequireExists=*/false,
+                                 /*EvenReadOnly=*/true, /*Quiet=*/true);
+    }
   }
 }
 

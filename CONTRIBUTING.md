@@ -177,6 +177,14 @@ Worked example: `Source/UAgent/Private/Tools/Blueprint/SetComponentMaterialTool.
 
 Do not try to route this through `FBlueprintEditorUtils::PostEditChangeBlueprintActors` or a compile-flag: the former is too coarse (actor-level `PostEditChange`, not property-level), and no compile flag exists that forces template→instance sync for already-placed actors.
 
+## Developer mode — `propose_missing_tool`
+
+When `UUAgentSettings::bDeveloperMode` is on **and** the plugin's `Source/UAgent/Private/Tools/` directory is writable, the registry exposes one extra tool — `propose_missing_tool` — and prepends a standing instruction to every prompt asking the agent to call it whenever the registered tool set doesn't cover the user's intent. Both surfaces are gated at registration time (one site in `BuiltinTools.cpp`, one site in `SACPChatWindow::OnSendClicked`); when the gate is closed, neither MCP `tools/list` nor the prompt blocks change. Toggling the setting requires an editor restart.
+
+When the agent calls `propose_missing_tool` it surfaces a "tool proposal" card via `FProposalBroker` (parallel to `FPermissionBroker`). Accept writes a sidecar under `Saved/UAgent/Proposals/<UTC>-<name>.json` containing the proposed tool spec plus the originating user prompt, and tells the agent to halt. The sidecar survives the editor restart you need to register the new tool; on next session start, `SACPChatWindow::ScanForPendingProposals` reads the directory and surfaces a Retry/Dismiss banner per pending entry. Retry replays the saved prompt — with the new tool now visible in `tools/list`.
+
+**Adding a new tool requires a full editor restart, not Live Coding.** Live Coding can patch existing function bodies but cannot reliably add new global ctors against the singleton tool registry — `RegisterBuiltinTools` already ran with the old factory list. Trust the halt-and-restart cycle; don't try to skip it.
+
 ## Code style
 
 C++ is formatted with `clang-format` against the `.clang-format` at the repo root (`BasedOnStyle: LLVM`). Before sending a PR:

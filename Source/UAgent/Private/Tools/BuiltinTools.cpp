@@ -1,5 +1,6 @@
 #include "BuiltinTools.h"
 #include "../Protocol/ACPToolRegistry.h"
+#include "Common/DeveloperGate.h"
 
 namespace UAgent {
 void RegisterBuiltinTools(FACPToolRegistry &Registry) {
@@ -79,5 +80,15 @@ void RegisterBuiltinTools(FACPToolRegistry &Registry) {
   // Config.
   Registry.Register(CreateReadConfigTool());
   Registry.Register(CreateWriteConfigTool());
+
+  // Developer-mode-only tools. Gate-conditional registration so they don't
+  // appear in MCP tools/list for external clients (Claude Desktop, Cursor,
+  // Zed) and so the in-process registry can't be tricked into invoking
+  // them when the gate is closed. The same gate suppresses the standing
+  // instruction in SACPChatWindow::OnSendClicked, keeping policy and
+  // implementation in sync at the single boundary.
+  if (Common::IsDeveloperToolingEnabled()) {
+    Registry.Register(CreateProposeMissingToolTool());
+  }
 }
 } // namespace UAgent

@@ -97,4 +97,20 @@ public:
             meta = (DisplayName = "MCP Server Port", ClampMin = 1024,
                     ClampMax = 65535))
   int32 MCPServerPort = 47777;
+
+  /**
+   * Exposes developer-only affordances to the agent — currently the
+   * propose_missing_tool flow that lets it surface clearly-missing tools
+   * instead of improvising. Off by default; do not enable in shipped projects.
+   * Also gated at runtime on the plugin's Source/UAgent/Private/Tools
+   * directory being writable, so flipping this on for a binary-only install
+   * has no effect.
+   *
+   * Toggling this requires an editor restart to take effect — tool
+   * registration runs once in StartupModule.
+   */
+  UPROPERTY(Config, EditAnywhere, Category = "Developer",
+            meta = (DisplayName = "Developer Mode",
+                    ToolTip = "Requires editor restart to take effect."))
+  bool bDeveloperMode = false;
 };
