@@ -150,6 +150,13 @@ private:
 
   TSharedPtr<SHorizontalBox> AgentSettingsContainer;
 
+  // Once-per-session gate for the AGENTS.md project context block. We read
+  // <ProjectDir>/AGENTS.md on the first user prompt and prepend its content
+  // as a framing context block; subsequent prompts skip it because the agent
+  // already has it. Reset to false in StartSession so each new session
+  // re-loads (catches edits to AGENTS.md between sessions).
+  bool bProjectContextSent = false;
+
   TMap<FName, FAssetData> ContextChips;
   // Subset of ContextChips keys that were added by an @[AssetName] token. These
   // get auto-removed from ContextChips when the token disappears from the

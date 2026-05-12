@@ -502,6 +502,10 @@ void SACPChatWindow::StartSession() {
   PendingProposals.Reset();
   UAgent::FProposalBroker::Get().ResetTurn();
 
+  // New session — re-send AGENTS.md on the first prompt so edits between
+  // sessions are picked up.
+  bProjectContextSent = false;
+
   if (MessageLog.IsValid())
     MessageLog->Reset();
 
@@ -794,6 +798,25 @@ FReply SACPChatWindow::OnSendClicked() {
         "If its result includes halt:true, end the turn immediately.");
     Blocks.Insert(UAgent::FContentBlock::MakeText(StandingInstruction),
                   /*Index=*/0);
+  }
+
+  // Project context — AGENTS.md from the UE5 project root, once per session.
+  // Inserted after the dev-mode policy (which must stay near index 0 to
+  // survive mid-context attention drop) but before per-asset context, so it
+  // frames every later block as "for this project". The flag flips to true
+  // whether or not the file exists — absent AGENTS.md means we silently skip
+  // for the rest of the session rather than stat the disk every turn.
+  if (!bProjectContextSent) {
+    const FString AgentsMdPath = FPaths::ProjectDir() / TEXT("AGENTS.md");
+    FString AgentsMd;
+    if (FFileHelper::LoadFileToString(AgentsMd, *AgentsMdPath)) {
+      const FString Wrapped = FString::Printf(
+          TEXT("Project context (AGENTS.md):\n\n%s"), *AgentsMd);
+      const int32 InsertIdx =
+          UAgent::Common::IsDeveloperToolingEnabled() ? 1 : 0;
+      Blocks.Insert(UAgent::FContentBlock::MakeText(Wrapped), InsertIdx);
+    }
+    bProjectContextSent = true;
   }
 
   Blocks.Add(UAgent::FContentBlock::MakeText(UserText));
