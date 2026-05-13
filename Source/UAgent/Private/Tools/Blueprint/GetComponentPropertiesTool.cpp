@@ -6,24 +6,12 @@
 #include "Components/ActorComponent.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
-#include "Engine/SCS_Node.h"
-#include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/UnrealType.h"
 
 namespace UAgent {
 namespace {
-USCS_Node *FindScsNode(USimpleConstructionScript *SCS, const FName &Name) {
-  if (!SCS)
-    return nullptr;
-  for (USCS_Node *N : SCS->GetAllNodes()) {
-    if (N && N->GetVariableName() == Name)
-      return N;
-  }
-  return nullptr;
-}
-
 AActor *FindActor(const FString &NameOrLabel) {
   UEditorActorSubsystem *Sub =
       GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
@@ -66,8 +54,9 @@ public:
   virtual FString GetDescription() const override {
     return TEXT(
         "Dump a component's properties as JSON. Two modes: on a Blueprint "
-        "(blueprintPath + componentName → reads the SCS node's "
-        "component_template) or on a placed actor (actor + componentName → "
+        "(blueprintPath + componentName → reads the SCS component template "
+        "or, if the name names an inherited C++ default subobject, the "
+        "GeneratedClass CDO) or on a placed actor (actor + componentName → "
         "reads the live instance). Optional propertyNames narrows the dump.");
   }
 
@@ -75,9 +64,9 @@ public:
     return ParseJsonObject(LR"JSON({
 					"type": "object",
 					"properties": {
-						"blueprintPath": { "type": "string", "description": "Blueprint asset path. Use together with componentName to read an SCS component template." },
+						"blueprintPath": { "type": "string", "description": "Blueprint asset path. Use together with componentName to read a component template (SCS) or inherited C++ default subobject (CDO)." },
 						"actor":         { "type": "string", "description": "Placed actor name or label. Use together with componentName to read a live component instance." },
-						"componentName": { "type": "string", "description": "Component variable name (SCS node name, or component instance name)." },
+						"componentName": { "type": "string", "description": "Component variable name. Matches an SCS node, or an inherited C++ component declared via CreateDefaultSubobject (e.g. 'EquipmentComponent')." },
 						"propertyNames": {
 							"type": "array",
 							"items": { "type": "string" },
@@ -124,22 +113,20 @@ public:
       UBlueprint *BP = BlueprintAccess::LoadBlueprintByPath(BPPath, Err);
       if (!BP)
         return FToolResponse::Fail(-32000, Err);
-      if (!BP->SimpleConstructionScript) {
+      BlueprintAccess::FResolvedBlueprintComponent Resolved =
+          BlueprintAccess::ResolveBlueprintComponent(BP, CompName);
+      if (!Resolved.Component) {
         return FToolResponse::Fail(
             -32000,
-            TEXT("Blueprint has no SimpleConstructionScript (not an Actor?)"));
-      }
-      USCS_Node *Node =
-          FindScsNode(BP->SimpleConstructionScript, FName(*CompName));
-      if (!Node) {
-        return FToolResponse::Fail(
-            -32000,
-            FString::Printf(TEXT("SCS component '%s' not found on BP "
-                                 "(inherited components not supported)"),
+            FString::Printf(TEXT("component '%s' not found on BP "
+                                 "(checked SCS and inherited subobjects)"),
                             *CompName));
       }
-      Component = Node->ComponentTemplate;
-      Source = TEXT("blueprint");
+      Component = Resolved.Component;
+      Source = Resolved.Source ==
+                       BlueprintAccess::EBlueprintComponentSource::Inherited
+                   ? TEXT("blueprint_inherited")
+                   : TEXT("blueprint");
       OwnerName = BP->GetPathName();
     } else {
       AActor *A = FindActor(ActorName);
