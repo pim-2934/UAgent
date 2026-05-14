@@ -69,47 +69,41 @@ int32 CountCompleted(const TArray<UAgent::FPlanEntry> &Entries) {
 void SACPPlanStrip::Construct(const FArguments & /*InArgs*/) {
   SAssignNew(BodyContainer, SVerticalBox);
 
-  ChildSlot[SNew(SBorder)
-                .BorderImage(
-                    FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
-                .Visibility(this, &SACPPlanStrip::GetSelfVisibility)
-                .Padding(FMargin(0))
-                    [SNew(SVerticalBox) +
-                     SVerticalBox::Slot().AutoHeight()
-                         [SNew(SButton)
-                              .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                              .ContentPadding(FMargin(8, 4))
-                              .HAlign(HAlign_Fill)
-                              .OnClicked(this,
-                                         &SACPPlanStrip::OnHeaderClicked)
-                                  [SNew(SHorizontalBox) +
-                                   SHorizontalBox::Slot()
-                                       .AutoWidth()
-                                       .VAlign(VAlign_Center)
-                                       .Padding(0, 0, 6, 0)
-                                           [SNew(SImage)
-                                                .Image(this,
-                                                       &SACPPlanStrip::
-                                                           GetChevronBrush)
-                                                .DesiredSizeOverride(
-                                                    FVector2D(12, 12))
-                                                .ColorAndOpacity(
-                                                    FSlateColor::
-                                                        UseForeground())] +
-                                   SHorizontalBox::Slot()
-                                       .FillWidth(1.0f)
-                                       .VAlign(VAlign_Center)
-                                           [SNew(STextBlock)
-                                                .Text(this,
-                                                      &SACPPlanStrip::
-                                                          GetHeaderText)
-                                                .ColorAndOpacity(FLinearColor(
-                                                    0.85f, 0.85f, 0.85f))]]] +
-                     SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 6)
-                         [SNew(SBox)
-                              .Visibility(this,
-                                          &SACPPlanStrip::GetBodyVisibility)
-                                  [BodyContainer.ToSharedRef()]]]];
+  ChildSlot
+      [SNew(SBorder)
+           .BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+           .Visibility(this, &SACPPlanStrip::GetSelfVisibility)
+           .Padding(FMargin(0))
+               [SNew(SVerticalBox) +
+                SVerticalBox::Slot().AutoHeight()
+                    [SNew(SButton)
+                         .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                         .ContentPadding(FMargin(8, 4))
+                         .HAlign(HAlign_Fill)
+                         .OnClicked(this, &SACPPlanStrip::OnHeaderClicked)
+                             [SNew(SHorizontalBox) +
+                              SHorizontalBox::Slot()
+                                  .AutoWidth()
+                                  .VAlign(VAlign_Center)
+                                  .Padding(0, 0, 6, 0)
+                                      [SNew(SImage)
+                                           .Image(this, &SACPPlanStrip::
+                                                            GetChevronBrush)
+                                           .DesiredSizeOverride(
+                                               FVector2D(12, 12))
+                                           .ColorAndOpacity(
+                                               FSlateColor::UseForeground())] +
+                              SHorizontalBox::Slot().FillWidth(1.0f).VAlign(
+                                  VAlign_Center)
+                                  [SNew(STextBlock)
+                                       .Text(this,
+                                             &SACPPlanStrip::GetHeaderText)
+                                       .ColorAndOpacity(FLinearColor(
+                                           0.85f, 0.85f, 0.85f))]]] +
+                SVerticalBox::Slot().AutoHeight().Padding(
+                    8, 0, 8, 6)[SNew(SBox).Visibility(
+                    this, &SACPPlanStrip::GetBodyVisibility)
+                                    [BodyContainer.ToSharedRef()]]]];
 }
 
 void SACPPlanStrip::SetPlan(const TArray<UAgent::FPlanEntry> &InEntries) {
@@ -131,23 +125,20 @@ void SACPPlanStrip::SetPlan(const TArray<UAgent::FPlanEntry> &InEntries) {
   for (const UAgent::FPlanEntry &Entry : Entries) {
     const FString Glyph = StatusGlyph(Entry.Status);
     const FLinearColor Color = RowColor(Entry);
-    BodyContainer->AddSlot().AutoHeight().Padding(0, 1)
-        [SNew(SHorizontalBox) +
-         SHorizontalBox::Slot()
-             .AutoWidth()
-             .VAlign(VAlign_Center)
-             .Padding(0, 0, 8, 0)
-                 [SNew(SBox).MinDesiredWidth(14.0f)
-                      [SNew(STextBlock)
-                           .Text(FText::FromString(Glyph))
-                           .ColorAndOpacity(Color)]] +
-         SHorizontalBox::Slot()
-             .FillWidth(1.0f)
-             .VAlign(VAlign_Center)
-                 [SNew(STextBlock)
-                      .Text(FText::FromString(Entry.Content))
-                      .ColorAndOpacity(Color)
-                      .AutoWrapText(true)]];
+    BodyContainer->AddSlot().AutoHeight().Padding(
+        0, 1)[SNew(SHorizontalBox) +
+              SHorizontalBox::Slot()
+                  .AutoWidth()
+                  .VAlign(VAlign_Center)
+                  .Padding(0, 0, 8, 0)[SNew(SBox).MinDesiredWidth(
+                      14.0f)[SNew(STextBlock)
+                                 .Text(FText::FromString(Glyph))
+                                 .ColorAndOpacity(Color)]] +
+              SHorizontalBox::Slot().FillWidth(1.0f).VAlign(
+                  VAlign_Center)[SNew(STextBlock)
+                                     .Text(FText::FromString(Entry.Content))
+                                     .ColorAndOpacity(Color)
+                                     .AutoWrapText(true)]];
   }
 }
 
@@ -171,8 +162,7 @@ FText SACPPlanStrip::GetHeaderText() const {
   }
   const int32 Done = CountCompleted(Entries);
   return FText::Format(LOCTEXT("PlanHeader", "Plan · {0} of {1} done"),
-                       FText::AsNumber(Done),
-                       FText::AsNumber(Entries.Num()));
+                       FText::AsNumber(Done), FText::AsNumber(Entries.Num()));
 }
 
 EVisibility SACPPlanStrip::GetSelfVisibility() const {
