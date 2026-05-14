@@ -16,7 +16,7 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 ## Blueprints
 
 - **read_blueprint** — Dump a Blueprint as JSON: graphs, nodes, pins, and connections.
-- **create_node** — Spawn a node in a Blueprint graph; returns the new node's GUID.
+- **create_node** — Spawn a node in a Blueprint graph (function call, variable get/set, event override, multicast-delegate bind/unbind/clear, or raw `UK2Node` subclass); returns the new node's GUID.
 - **link_nodes** — Wire two pins, respecting `UEdGraphSchema_K2` type-checks.
 - **set_pin_default** — Set the default value on an input pin; schema-validated.
 - **delete_node** — Remove a node from a Blueprint graph; breaks its links and destroys it.

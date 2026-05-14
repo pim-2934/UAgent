@@ -42,7 +42,7 @@ public:
 						},
 						"nodeSpec": {
 							"type": "string",
-							"description": "What to spawn. One of: 'function:/Script/Module.Class.FunctionName', 'variable-get:VarName', 'variable-set:VarName', 'event:ReceiveBeginPlay', 'node:/Script/Module.ClassName' (raw UK2Node subclass)."
+							"description": "What to spawn. One of: 'function:/Script/Module.Class.FunctionName', 'variable-get:VarName', 'variable-set:VarName', 'event:ReceiveBeginPlay', 'add-delegate:OnFooDelegate' (or 'add-delegate:/Script/Module.Class.OnFooDelegate' to disambiguate the owning class) plus the parallel 'remove-delegate:' and 'clear-delegate:' forms — all three bind to a multicast delegate property on self; wire the delegate input pin from a CustomEvent via link_nodes. 'node:/Script/Module.ClassName' is the raw UK2Node subclass fallback."
 						},
 						"posX": { "type": "number", "description": "Graph X position" },
 						"posY": { "type": "number", "description": "Graph Y position" }
