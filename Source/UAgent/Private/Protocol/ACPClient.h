@@ -119,6 +119,13 @@ public:
    * modes. */
   const FString &GetCurrentModeId() const { return CurrentModeId; }
 
+  /** Slash commands the agent has advertised — initially via session/new,
+   * refreshed by available_commands_update notifications. Empty when the
+   * agent doesn't expose any (or session not yet created). */
+  const TArray<FAvailableCommand> &GetAvailableCommands() const {
+    return AvailableCommands;
+  }
+
   FOnClientStateChanged OnStateChanged;
   FOnSessionUpdateDelegate OnSessionUpdate;
   FOnPromptCompleted OnPromptCompleted;
@@ -161,6 +168,8 @@ private:
 
   TArray<FSessionMode> AvailableModes;
   FString CurrentModeId;
+
+  TArray<FAvailableCommand> AvailableCommands;
 
   // Guard against Transport::Shutdown's synchronous OnExit being mistaken
   // for an unexpected agent crash during an intentional Stop().

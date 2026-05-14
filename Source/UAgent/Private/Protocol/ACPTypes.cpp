@@ -173,6 +173,35 @@ bool FSessionMode::FromJson(const TSharedRef<FJsonObject> &Obj,
   return true;
 }
 
+bool FAvailableCommand::FromJson(const TSharedRef<FJsonObject> &Obj,
+                                 FAvailableCommand &Out) {
+  if (!Obj->TryGetStringField(TEXT("name"), Out.Name) || Out.Name.IsEmpty()) {
+    return false;
+  }
+  Obj->TryGetStringField(TEXT("description"), Out.Description);
+  const TSharedPtr<FJsonObject> *InputObj = nullptr;
+  if (Obj->TryGetObjectField(TEXT("input"), InputObj) && InputObj &&
+      InputObj->IsValid()) {
+    (*InputObj)->TryGetStringField(TEXT("hint"), Out.InputHint);
+  }
+  return true;
+}
+
+void ParseAvailableCommands(const TArray<TSharedPtr<FJsonValue>> &In,
+                            TArray<FAvailableCommand> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FAvailableCommand Cmd;
+    if (FAvailableCommand::FromJson(Obj->ToSharedRef(), Cmd)) {
+      Out.Add(MoveTemp(Cmd));
+    }
+  }
+}
+
 void ParseSessionModes(const TArray<TSharedPtr<FJsonValue>> &In,
                        TArray<FSessionMode> &Out) {
   Out.Reset();
@@ -301,6 +330,10 @@ bool FSessionUpdate::FromJson(const TSharedRef<FJsonObject> &Params,
   }
   if (Kind == TEXT("available_commands_update")) {
     Out.Kind = EKind::AvailableCommandsUpdate;
+    const TArray<TSharedPtr<FJsonValue>> *Arr = nullptr;
+    if ((*UpdateObj)->TryGetArrayField(TEXT("availableCommands"), Arr) && Arr) {
+      ParseAvailableCommands(*Arr, Out.AvailableCommands);
+    }
     return true;
   }
   if (Kind == TEXT("current_mode_update")) {

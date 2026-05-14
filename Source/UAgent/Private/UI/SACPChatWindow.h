@@ -11,6 +11,7 @@ class FJsonObject;
 
 namespace UAgent {
 class FACPClient;
+struct FAvailableCommand;
 struct FSessionUpdate;
 struct FPermissionRequest;
 struct FProposalRequest;
@@ -24,6 +25,7 @@ struct FContentBlock;
 enum class EProposalRowDecision : uint8;
 
 class FChatMessageLog;
+class SACPCommandPicker;
 class SACPContextStrip;
 class SACPMentionPicker;
 class SACPMessageList;
@@ -72,6 +74,7 @@ private:
   void OnClientError(const FString &Message);
 
   void OnMentionPicked(const FAssetData &Asset);
+  void OnCommandPicked(const UAgent::FAvailableCommand &Command);
   void AddContextChip(const FAssetData &Asset);
   void RemoveContextChip(const FAssetData &Asset);
   void RebuildContextStrip();
@@ -116,6 +119,7 @@ private:
   TSharedPtr<SMultiLineEditableTextBox> InputBox;
   TSharedPtr<STextBlock> StatusLabel;
   TSharedPtr<SACPMentionPicker> MentionPicker;
+  TSharedPtr<SACPCommandPicker> CommandPicker;
 
   // Pending permission callbacks keyed by the per-row UUID assigned in
   // FChatMessageLog::AppendPermission. Stable across log mutations, unlike

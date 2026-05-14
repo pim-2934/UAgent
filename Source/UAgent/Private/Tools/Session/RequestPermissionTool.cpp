@@ -140,10 +140,10 @@ ResolveOutcome(FString ChosenId,
  * to the user, who clicks Accept or Cancel on a chat row.
  *
  * Note: with agent-broadcast session modes (session/set_mode), the agent
- * itself decides whether to *ask* — Claude's "acceptEdits" / "bypassPermissions"
- * modes simply don't call request_permission for those classes. That gating
- * moved out of this tool; what's left here is the local "skip nagging on
- * reads" optimization and the user-prompt fallback.
+ * itself decides whether to *ask* — Claude's "acceptEdits" /
+ * "bypassPermissions" modes simply don't call request_permission for those
+ * classes. That gating moved out of this tool; what's left here is the local
+ * "skip nagging on reads" optimization and the user-prompt fallback.
  *
  * The returned optionId MUST be one the agent actually offered in options[];
  * echoing a hardcoded value causes the agent to treat the response as refused.
@@ -230,9 +230,10 @@ public:
           const bool bAllow = (Outcome == EPermissionOutcome::Allow);
           const FString ChosenId =
               bAllow ? PickAllowId(Options) : PickRejectId(Options);
-          UE_LOG(LogUAgent, Verbose,
-                 TEXT("request_permission: toolKind='%s' user-%s optionId='%s'"),
-                 *ToolKind, bAllow ? TEXT("allow") : TEXT("deny"), *ChosenId);
+          UE_LOG(
+              LogUAgent, Verbose,
+              TEXT("request_permission: toolKind='%s' user-%s optionId='%s'"),
+              *ToolKind, bAllow ? TEXT("allow") : TEXT("deny"), *ChosenId);
           Complete(ResolveOutcome(ChosenId, Options));
         });
   }

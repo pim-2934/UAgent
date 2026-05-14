@@ -53,6 +53,7 @@ void FACPClient::Stop() {
   ConfigOptions.Reset();
   AvailableModes.Reset();
   CurrentModeId.Reset();
+  AvailableCommands.Reset();
   OnAgentSettingsChanged.Broadcast();
   SetState(EClientState::Disconnected);
   bStopping = false;
@@ -202,22 +203,34 @@ void FACPClient::SendNewSession() {
         const TSharedPtr<FJsonObject> *ModesObj = nullptr;
         if (Result->TryGetObjectField(TEXT("modes"), ModesObj) && ModesObj &&
             ModesObj->IsValid()) {
-          (*ModesObj)->TryGetStringField(TEXT("current_mode_id"), CurrentModeId);
+          (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
+                                         CurrentModeId);
           const TArray<TSharedPtr<FJsonValue>> *ModesArr = nullptr;
-          if ((*ModesObj)
-                  ->TryGetArrayField(TEXT("available_modes"), ModesArr) &&
+          if ((*ModesObj)->TryGetArrayField(TEXT("available_modes"),
+                                            ModesArr) &&
               ModesArr) {
             ParseSessionModes(*ModesArr, AvailableModes);
           }
+        }
+
+        // Slash commands the agent advertises at session start. Agents that
+        // don't expose any (or only push them via available_commands_update)
+        // simply leave this empty; the chat's command picker stays inert
+        // until an update arrives.
+        AvailableCommands.Reset();
+        const TArray<TSharedPtr<FJsonValue>> *CmdArr = nullptr;
+        if (Result->TryGetArrayField(TEXT("availableCommands"), CmdArr) &&
+            CmdArr) {
+          ParseAvailableCommands(*CmdArr, AvailableCommands);
         }
 
         OnAgentSettingsChanged.Broadcast();
 
         UE_LOG(LogUAgent, Log,
                TEXT("Session ready: %s (configOptions=%d, modes=%d, "
-                    "current='%s')"),
+                    "current='%s', commands=%d)"),
                *SessionId, ConfigOptions.Num(), AvailableModes.Num(),
-               *CurrentModeId);
+               *CurrentModeId, AvailableCommands.Num());
         SetState(EClientState::Ready);
       });
 }
@@ -280,6 +293,10 @@ void FACPClient::HandleNotification(const FString &Method,
                  !Update.CurrentModeId.IsEmpty() &&
                  Update.CurrentModeId != CurrentModeId) {
         CurrentModeId = Update.CurrentModeId;
+        bSettingsChanged = true;
+      } else if (Update.Kind ==
+                 FSessionUpdate::EKind::AvailableCommandsUpdate) {
+        AvailableCommands = Update.AvailableCommands;
         bSettingsChanged = true;
       }
 

@@ -94,6 +94,30 @@ struct FConfigOption {
 void ParseConfigOptions(const TArray<TSharedPtr<FJsonValue>> &In,
                         TArray<FConfigOption> &Out);
 
+/**
+ * One ACP slash command advertised by the agent (Claude's /init, /clear, /help,
+ * agent-specific shortcuts, …). Sent in `session/new`'s result and refreshed
+ * by `available_commands_update` notifications. Per the spec, the user
+ * invokes one by sending a regular `session/prompt` whose text begins with
+ * `/<name>` — there is no dedicated RPC.
+ */
+struct FAvailableCommand {
+  FString Name;
+  FString Description;
+  /** Optional free-form hint shown to the user when the command takes input
+   * (e.g. "test pattern", "branch name"). Populated from `input.hint`; empty
+   * when the command takes no arguments or the agent omitted the hint. */
+  FString InputHint;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj,
+                       FAvailableCommand &Out);
+};
+
+/** Parses a JSON array of AvailableCommand objects. Resets Out before
+ * populating; malformed entries are skipped. */
+void ParseAvailableCommands(const TArray<TSharedPtr<FJsonValue>> &In,
+                            TArray<FAvailableCommand> &Out);
+
 /** Stop reasons returned by session/prompt. */
 enum class EStopReason : uint8 {
   EndTurn,
@@ -141,6 +165,9 @@ struct FSessionUpdate {
 
   // CurrentModeUpdate: id of the mode the agent has switched into.
   FString CurrentModeId;
+
+  // AvailableCommandsUpdate: full advertised set of slash commands.
+  TArray<FAvailableCommand> AvailableCommands;
 
   // Fallback — raw object for kinds we don't model yet.
   TSharedPtr<FJsonObject> RawObject;

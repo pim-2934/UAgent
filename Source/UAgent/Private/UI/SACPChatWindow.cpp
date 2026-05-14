@@ -4,6 +4,7 @@
 #include "ChatMessageLog.h"
 #include "Protocol/ACPClient.h"
 #include "Protocol/ACPTypes.h"
+#include "SACPCommandPicker.h"
 #include "SACPContextStrip.h"
 #include "SACPMentionPicker.h"
 #include "SACPMessageList.h"
@@ -232,33 +233,45 @@ TSharedRef<SWidget> SACPChatWindow::BuildInputRow() {
                [SAssignNew(MentionPicker, SACPMentionPicker)
                     .OnAssetPicked_Lambda([this](const FAssetData &A) {
                       OnMentionPicked(A);
-                    })[SNew(SBox)
-                           // Grow with content up to 30 lines, then let the
-                           // textbox scroll vertically.
-                           .MaxDesiredHeight_Lambda([]() -> FOptionalSize {
-                             const FSlateFontInfo Font =
-                                 FAppStyle::Get()
-                                     .GetWidgetStyle<FEditableTextBoxStyle>(
-                                         "NormalEditableTextBox")
-                                     .TextStyle.Font;
-                             const TSharedRef<FSlateFontMeasure> FM =
-                                 FSlateApplication::Get()
-                                     .GetRenderer()
-                                     ->GetFontMeasureService();
-                             return 30.0f * FM->GetMaxCharacterHeight(Font);
-                           })[SAssignNew(InputBox, SMultiLineEditableTextBox)
-                                  .HintText(LOCTEXT(
-                                      "InputHint",
-                                      "Ask anything — Enter to send, "
-                                      "Shift+Enter for newline, @ to add "
-                                      "context"))
-                                  .OnKeyDownHandler(this,
-                                                    &SACPChatWindow::OnInputKey)
-                                  .OnTextChanged(
-                                      this, &SACPChatWindow::OnInputTextChanged)
-                                  .AllowMultiLine(true)
-                                  .AutoWrapText(true)
-                                  .AlwaysShowScrollbars(false)]]] +
+                    })[SAssignNew(CommandPicker, SACPCommandPicker)
+                           .OnCommandPicked_Lambda([this](const UAgent::
+                                                              FAvailableCommand
+                                                                  &C) {
+                             OnCommandPicked(C);
+                           })[SNew(SBox)
+                                  // Grow with content up to 30 lines, then
+                                  // let the textbox scroll vertically.
+                                  .MaxDesiredHeight_Lambda(
+                                      []() -> FOptionalSize {
+                                        const FSlateFontInfo Font =
+                                            FAppStyle::Get()
+                                                .GetWidgetStyle<
+                                                    FEditableTextBoxStyle>(
+                                                    "NormalEditableTextBox")
+                                                .TextStyle.Font;
+                                        const TSharedRef<FSlateFontMeasure> FM =
+                                            FSlateApplication::Get()
+                                                .GetRenderer()
+                                                ->GetFontMeasureService();
+                                        return 30.0f *
+                                               FM->GetMaxCharacterHeight(Font);
+                                      })[SAssignNew(InputBox,
+                                                    SMultiLineEditableTextBox)
+                                             .HintText(LOCTEXT(
+                                                 "InputHint",
+                                                 "Ask anything — Enter to "
+                                                 "send, Shift+Enter for "
+                                                 "newline, @ for context, "
+                                                 "/ for commands"))
+                                             .OnKeyDownHandler(
+                                                 this,
+                                                 &SACPChatWindow::OnInputKey)
+                                             .OnTextChanged(
+                                                 this, &SACPChatWindow::
+                                                           OnInputTextChanged)
+                                             .AllowMultiLine(true)
+                                             .AutoWrapText(true)
+                                             .AlwaysShowScrollbars(false)]]]] +
            SHorizontalBox::Slot().AutoWidth().VAlign(
                VAlign_Bottom)[SNew(SButton)
                                   .Text_Lambda([this]() -> FText {
@@ -304,6 +317,14 @@ void SACPChatWindow::RefreshAgentSettings() {
   if (!AgentSettingsContainer.IsValid() || !Client.IsValid())
     return;
 
+  // Slash-command picker stays in sync with the agent's advertised set.
+  // Re-pushing on every settings change is cheap (small array, list widget
+  // only redraws when open) and keeps a runtime available_commands_update
+  // from leaving stale entries in the popup.
+  if (CommandPicker.IsValid()) {
+    CommandPicker->SetCommands(Client->GetAvailableCommands());
+  }
+
   // Wholesale rebuild — agents may legitimately change advertised sets and
   // dropdown counts at runtime via config_option_update / current_mode_update.
   AgentSettingsContainer->ClearChildren();
@@ -332,43 +353,48 @@ void SACPChatWindow::RefreshAgentSettings() {
     AgentSettingsContainer->AddSlot()
         .AutoWidth()
         .VAlign(VAlign_Center)
-        .Padding(0, 0, 4, 0)
-            [SNew(STextBlock).Text(LOCTEXT("ModeDropdownLabel", "Mode:"))];
-    AgentSettingsContainer->AddSlot().AutoWidth().VAlign(VAlign_Center)
-        [SNew(SComboBox<TSharedPtr<FString>>)
-             .OptionsSource(&State->Labels)
-             .InitiallySelectedItem(State->Labels[InitialIdx])
-             .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
-               return SNew(STextBlock)
-                   .Text(Item.IsValid() ? FText::FromString(*Item)
-                                        : FText::GetEmpty());
-             })
-             .OnSelectionChanged_Lambda([ClientCopy, State](
-                                            TSharedPtr<FString> NewVal,
-                                            ESelectInfo::Type) {
-               if (!NewVal.IsValid() || !ClientCopy.IsValid())
-                 return;
-               const int32 Idx = State->Labels.IndexOfByPredicate(
-                   [&](const TSharedPtr<FString> &P) {
-                     return P.IsValid() && *P == *NewVal;
-                   });
-               if (Idx == INDEX_NONE)
-                 return;
-               const FString &Picked = State->Values[Idx];
-               UAgent::SessionModeStore::Save(Picked);
-               ClientCopy->SetSessionMode(Picked);
-             })[SNew(STextBlock).Text_Lambda([this] {
-               if (!Client.IsValid())
-                 return FText::GetEmpty();
-               const FString &Cur = Client->GetCurrentModeId();
-               for (const UAgent::FSessionMode &M :
-                    Client->GetAvailableModes()) {
-                 if (M.Id == Cur) {
-                   return FText::FromString(M.Name.IsEmpty() ? M.Id : M.Name);
-                 }
-               }
-               return FText::FromString(Cur);
-             })]];
+        .Padding(
+            0, 0, 4,
+            0)[SNew(STextBlock).Text(LOCTEXT("ModeDropdownLabel", "Mode:"))];
+    AgentSettingsContainer->AddSlot().AutoWidth().VAlign(
+        VAlign_Center)[SNew(SComboBox<TSharedPtr<FString>>)
+                           .OptionsSource(&State->Labels)
+                           .InitiallySelectedItem(State->Labels[InitialIdx])
+                           .OnGenerateWidget_Lambda(
+                               [](TSharedPtr<FString> Item) {
+                                 return SNew(STextBlock)
+                                     .Text(Item.IsValid()
+                                               ? FText::FromString(*Item)
+                                               : FText::GetEmpty());
+                               })
+                           .OnSelectionChanged_Lambda(
+                               [ClientCopy, State](TSharedPtr<FString> NewVal,
+                                                   ESelectInfo::Type) {
+                                 if (!NewVal.IsValid() || !ClientCopy.IsValid())
+                                   return;
+                                 const int32 Idx =
+                                     State->Labels.IndexOfByPredicate(
+                                         [&](const TSharedPtr<FString> &P) {
+                                           return P.IsValid() && *P == *NewVal;
+                                         });
+                                 if (Idx == INDEX_NONE)
+                                   return;
+                                 const FString &Picked = State->Values[Idx];
+                                 UAgent::SessionModeStore::Save(Picked);
+                                 ClientCopy->SetSessionMode(Picked);
+                               })[SNew(STextBlock).Text_Lambda([this] {
+                             if (!Client.IsValid())
+                               return FText::GetEmpty();
+                             const FString &Cur = Client->GetCurrentModeId();
+                             for (const UAgent::FSessionMode &M :
+                                  Client->GetAvailableModes()) {
+                               if (M.Id == Cur) {
+                                 return FText::FromString(
+                                     M.Name.IsEmpty() ? M.Id : M.Name);
+                               }
+                             }
+                             return FText::FromString(Cur);
+                           })]];
   }
 
   // One dropdown per advertised model config option. Other categories
@@ -664,8 +690,14 @@ FReply SACPChatWindow::OnExportClicked() {
 
 FReply SACPChatWindow::OnInputKey(const FGeometry &, const FKeyEvent &Key) {
   if (Key.GetKey() == EKeys::Enter && !Key.IsShiftDown()) {
-    // While the @-mention popup is open, Enter confirms the top match
-    // (OnMentionPicked strips the @query and adds the chip) instead of sending.
+    // Command popup wins over mention popup wins over send — the user's
+    // active autocomplete should always be the thing Enter acts on.
+    if (CommandPicker.IsValid() && CommandPicker->IsOpen()) {
+      if (!CommandPicker->ConfirmTopResult()) {
+        CommandPicker->Close();
+      }
+      return FReply::Handled();
+    }
     if (MentionPicker.IsValid() && MentionPicker->IsOpen()) {
       if (!MentionPicker->ConfirmTopResult()) {
         MentionPicker->Close();
@@ -675,16 +707,58 @@ FReply SACPChatWindow::OnInputKey(const FGeometry &, const FKeyEvent &Key) {
     OnSendClicked();
     return FReply::Handled();
   }
-  if (Key.GetKey() == EKeys::Escape && MentionPicker.IsValid() &&
-      MentionPicker->IsOpen()) {
-    MentionPicker->Close();
-    return FReply::Handled();
+  if (Key.GetKey() == EKeys::Escape) {
+    if (CommandPicker.IsValid() && CommandPicker->IsOpen()) {
+      CommandPicker->Close();
+      return FReply::Handled();
+    }
+    if (MentionPicker.IsValid() && MentionPicker->IsOpen()) {
+      MentionPicker->Close();
+      return FReply::Handled();
+    }
   }
   return FReply::Unhandled();
 }
 
 void SACPChatWindow::OnInputTextChanged(const FText &NewText) {
   const FString S = NewText.ToString();
+
+  // Slash-command detection: the popup is active when the leading
+  // non-whitespace character is `/` AND no whitespace follows yet (still
+  // typing the name). Once the user types args (`/foo bar`), the picker
+  // closes — arguments ride in the same prompt text per the ACP spec, so
+  // no popup is needed for them.
+  int32 SlashPos = INDEX_NONE;
+  for (int32 i = 0; i < S.Len(); ++i) {
+    if (FChar::IsWhitespace(S[i]))
+      continue;
+    if (S[i] == TEXT('/'))
+      SlashPos = i;
+    break;
+  }
+  bool bSlashActive = SlashPos != INDEX_NONE;
+  if (bSlashActive) {
+    for (int32 i = SlashPos + 1; i < S.Len(); ++i) {
+      if (FChar::IsWhitespace(S[i])) {
+        bSlashActive = false;
+        break;
+      }
+    }
+  }
+  if (bSlashActive && CommandPicker.IsValid()) {
+    CommandPicker->RefreshResults(S.Mid(SlashPos + 1));
+    CommandPicker->Open();
+    // Slash mode supersedes @ — close the mention popup if it was up so
+    // the two don't fight for the same anchor.
+    if (MentionPicker.IsValid()) {
+      MentionPicker->Close();
+      PendingAtPosition = INDEX_NONE;
+    }
+    return;
+  }
+  if (CommandPicker.IsValid()) {
+    CommandPicker->Close();
+  }
 
   // Reconcile token-backed chips against @[...] tokens still present in the
   // text.
@@ -833,6 +907,35 @@ FReply SACPChatWindow::OnSendClicked() {
   }
 
   return FReply::Handled();
+}
+
+// ─── Slash command → text rewrite ───────────────────────────────────────────
+
+void SACPChatWindow::OnCommandPicked(const UAgent::FAvailableCommand &Command) {
+  if (!InputBox.IsValid())
+    return;
+
+  // Replace the typed `/<query>` prefix with `/<name> `. Trailing space
+  // closes the picker (next OnInputTextChanged sees whitespace after the
+  // slash word) and gives the user a natural cursor position for arguments.
+  // Commands with no args still trim cleanly in OnSendClicked.
+  const FString Cur = InputBox->GetText().ToString();
+  int32 SlashPos = INDEX_NONE;
+  for (int32 i = 0; i < Cur.Len(); ++i) {
+    if (FChar::IsWhitespace(Cur[i]))
+      continue;
+    if (Cur[i] == TEXT('/'))
+      SlashPos = i;
+    break;
+  }
+  const FString LeadingWs =
+      (SlashPos != INDEX_NONE) ? Cur.Left(SlashPos) : FString();
+  InputBox->SetText(FText::FromString(
+      FString::Printf(TEXT("%s/%s "), *LeadingWs, *Command.Name)));
+
+  if (CommandPicker.IsValid())
+    CommandPicker->Close();
+  FSlateApplication::Get().SetKeyboardFocus(InputBox);
 }
 
 // ─── Mention → chip ─────────────────────────────────────────────────────────
