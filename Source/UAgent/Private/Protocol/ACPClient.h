@@ -160,6 +160,11 @@ public:
    * support list also support load, but the spec treats them independently. */
   bool SupportsSessionLoad() const { return bAgentSupportsSessionLoad; }
 
+  /** Latest plan snapshot the agent has emitted via a `plan` session/update.
+   * Empty when the agent hasn't sent one this session (or after Stop /
+   * load). Per spec, each plan notification replaces this in full. */
+  const TArray<FPlanEntry> &GetCurrentPlan() const { return CurrentPlan; }
+
   FOnClientStateChanged OnStateChanged;
   FOnSessionUpdateDelegate OnSessionUpdate;
   FOnPromptCompleted OnPromptCompleted;
@@ -206,6 +211,8 @@ private:
   FString CurrentModeId;
 
   TArray<FAvailableCommand> AvailableCommands;
+
+  TArray<FPlanEntry> CurrentPlan;
 
   // Guard against Transport::Shutdown's synchronous OnExit being mistaken
   // for an unexpected agent crash during an intentional Stop().

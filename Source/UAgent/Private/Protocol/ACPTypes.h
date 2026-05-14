@@ -140,6 +140,46 @@ struct FSessionInfo {
 void ParseSessionInfos(const TArray<TSharedPtr<FJsonValue>> &In,
                        TArray<FSessionInfo> &Out);
 
+/** Status of one plan entry — drives the leading glyph in the UI. Unknown
+ * is the fallback for unrecognized strings so a future ACP value doesn't
+ * crash older clients. */
+enum class EPlanEntryStatus : uint8 {
+  Pending,
+  InProgress,
+  Completed,
+  Unknown,
+};
+
+/** Priority hint the agent attaches to each plan entry. Drives a subtle row
+ * tint in the strip; same Unknown fallback as Status. */
+enum class EPlanEntryPriority : uint8 {
+  Low,
+  Medium,
+  High,
+  Unknown,
+};
+
+EPlanEntryStatus ParsePlanEntryStatus(const FString &In);
+EPlanEntryPriority ParsePlanEntryPriority(const FString &In);
+
+/**
+ * One row in an agent's plan. Per the ACP spec the agent re-emits the full
+ * list on every update — clients replace, not patch. We mirror that here:
+ * no stable id on each entry, ordering and content carry meaning.
+ */
+struct FPlanEntry {
+  FString Content;
+  EPlanEntryStatus Status = EPlanEntryStatus::Unknown;
+  EPlanEntryPriority Priority = EPlanEntryPriority::Unknown;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj, FPlanEntry &Out);
+};
+
+/** Parses a JSON array of PlanEntry objects. Resets Out before populating;
+ * malformed entries (missing content) are skipped. */
+void ParsePlanEntries(const TArray<TSharedPtr<FJsonValue>> &In,
+                      TArray<FPlanEntry> &Out);
+
 /** Stop reasons returned by session/prompt. */
 enum class EStopReason : uint8 {
   EndTurn,
@@ -190,6 +230,10 @@ struct FSessionUpdate {
 
   // AvailableCommandsUpdate: full advertised set of slash commands.
   TArray<FAvailableCommand> AvailableCommands;
+
+  // Plan: full replacement plan — per spec, clients replace rather than
+  // patch. Empty array is a valid "clear the plan" signal.
+  TArray<FPlanEntry> PlanEntries;
 
   // Fallback — raw object for kinds we don't model yet.
   TSharedPtr<FJsonObject> RawObject;

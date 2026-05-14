@@ -27,6 +27,7 @@ class SACPCommandPicker;
 class SACPContextStrip;
 class SACPMentionPicker;
 class SACPMessageList;
+class SACPPlanStrip;
 class SHorizontalBox;
 class SMenuAnchor;
 class SMultiLineEditableTextBox;
@@ -122,6 +123,7 @@ private:
   TSharedPtr<FChatMessageLog> MessageLog;
 
   TSharedPtr<SACPMessageList> MessageList;
+  TSharedPtr<SACPPlanStrip> PlanStrip;
   TSharedPtr<SACPContextStrip> ContextStrip;
   TSharedPtr<SMultiLineEditableTextBox> InputBox;
   TSharedPtr<STextBlock> StatusLabel;

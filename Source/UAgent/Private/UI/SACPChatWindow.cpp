@@ -8,6 +8,7 @@
 #include "SACPContextStrip.h"
 #include "SACPMentionPicker.h"
 #include "SACPMessageList.h"
+#include "SACPPlanStrip.h"
 #include "Tools/Common/DeveloperGate.h"
 #include "Tools/Developer/ProposalBroker.h"
 #include "Tools/Session/PermissionBroker.h"
@@ -94,6 +95,8 @@ void SACPChatWindow::Construct(const FArguments &InArgs) {
       .OnProposalReplayDecided(FOnProposalReplayDecided::CreateSP(
           this, &SACPChatWindow::OnProposalReplayDecided));
 
+  SAssignNew(PlanStrip, SACPPlanStrip);
+
   // Route the agent's permission requests through the chat UI. Unbound on
   // teardown so a closed tab can't dangle the agent.
   UAgent::FPermissionBroker::Get().SetHandler(
@@ -127,6 +130,10 @@ void SACPChatWindow::Construct(const FArguments &InArgs) {
             SVerticalBox::Slot().AutoHeight()[BuildHeader()] +
             SVerticalBox::Slot().AutoHeight()[SNew(SSeparator)] +
             SVerticalBox::Slot().FillHeight(1.0f)[MessageList.ToSharedRef()] +
+            // Sticky plan strip — self-hides when there is no active plan
+            // (so its slot is invisible and zero-height), expands inline
+            // above the context strip when one arrives.
+            SVerticalBox::Slot().AutoHeight()[PlanStrip.ToSharedRef()] +
             SVerticalBox::Slot().AutoHeight()[SNew(SSeparator)] +
             SVerticalBox::Slot().AutoHeight()[ContextStrip.ToSharedRef()] +
             SVerticalBox::Slot().AutoHeight()[BuildInputRow()] +
@@ -569,6 +576,8 @@ void SACPChatWindow::StartSession() {
 
   if (MessageLog.IsValid())
     MessageLog->Reset();
+  if (PlanStrip.IsValid())
+    PlanStrip->Reset();
 
   const UUAgentSettings *Settings = GetDefault<UUAgentSettings>();
   if (!Settings || Settings->AgentCommand.IsEmpty()) {
@@ -793,6 +802,8 @@ void SACPChatWindow::OnHistoryEntryPicked(const FString &SessionIdToLoad) {
     MessageLog->AppendSystem(TEXT("Resuming previous session…"),
                              FLinearColor(0.6f, 0.75f, 0.95f));
   }
+  if (PlanStrip.IsValid())
+    PlanStrip->Reset();
   bProjectContextSent = true; // loaded session already has AGENTS.md context
 
   Client->LoadSession(SessionIdToLoad);
@@ -1308,6 +1319,12 @@ void SACPChatWindow::OnSessionUpdateReceived(
     const UAgent::FSessionUpdate &Update) {
   if (MessageLog.IsValid())
     MessageLog->ApplySessionUpdate(Update);
+  // Plan notifications route to the sticky strip instead of the message
+  // log — keeps progress visible without burying it under streamed tokens.
+  if (Update.Kind == UAgent::FSessionUpdate::EKind::Plan &&
+      PlanStrip.IsValid()) {
+    PlanStrip->SetPlan(Update.PlanEntries);
+  }
 }
 
 void SACPChatWindow::OnPromptDone(UAgent::EStopReason /*Reason*/,

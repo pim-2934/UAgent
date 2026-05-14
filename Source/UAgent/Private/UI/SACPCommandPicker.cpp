@@ -23,37 +23,52 @@ TSharedRef<SWidget> SACPCommandPicker::BuildPopupContent() {
       .OnSelectionChanged(this, &SACPCommandPicker::OnSelectionChanged)
       .SelectionMode(ESelectionMode::Single);
 
-  return SNew(SBox).MinDesiredWidth(360).MaxDesiredHeight(
-      260)[ResultsList.ToSharedRef()];
+  // Pin the popup width to the anchored input box so long descriptions
+  // wrap inside the row instead of pushing the popup wider than the chat.
+  // Lambda evaluates at layout time — Anchor is fully constructed by then.
+  return SNew(SBox)
+      .WidthOverride_Lambda([this]() -> FOptionalSize {
+        if (Anchor.IsValid()) {
+          const float W = Anchor->GetCachedGeometry().GetLocalSize().X;
+          if (W > 0.0f)
+            return W;
+        }
+        return 360.0f;
+      })
+      .MaxDesiredHeight(260)[ResultsList.ToSharedRef()];
 }
 
 TSharedRef<ITableRow>
 SACPCommandPicker::OnGenerateRow(TSharedPtr<UAgent::FAvailableCommand> Item,
                                  const TSharedRef<STableViewBase> &Owner) {
-  // Row layout:  /name [hint]   description
-  // Hint sits right next to the name (dim) so the user sees expected args
-  // without scanning; the description fills the remaining width.
-  const FString NameLabel =
-      Item.IsValid() ? FString::Printf(TEXT("/%s"), *Item->Name) : FString();
-  const FString HintLabel = (Item.IsValid() && !Item->InputHint.IsEmpty())
-                                ? FString::Printf(TEXT(" %s"), *Item->InputHint)
-                                : FString();
-  const FString Description = Item.IsValid() ? Item->Description : FString();
+  // Mirror SACPMentionPicker's row shape: primary text fills the left,
+  // secondary text auto-widths on the right in dim gray. The hint (if any)
+  // gets appended to the primary label as a command-signature suffix —
+  // `/test <pattern>` reads naturally without needing a separate column.
+  const FString Primary =
+      Item.IsValid() ? (Item->InputHint.IsEmpty()
+                            ? FString::Printf(TEXT("/%s"), *Item->Name)
+                            : FString::Printf(TEXT("/%s %s"), *Item->Name,
+                                              *Item->InputHint))
+                     : FString();
+  const FString Secondary = Item.IsValid() ? Item->Description : FString();
 
-  return SNew(
-      STableRow<TSharedPtr<UAgent::FAvailableCommand>>,
-      Owner)[SNew(SHorizontalBox) +
-             SHorizontalBox::Slot().AutoWidth().Padding(
-                 4, 2)[SNew(STextBlock).Text(FText::FromString(NameLabel))] +
-             SHorizontalBox::Slot().AutoWidth().Padding(
-                 0,
-                 2)[SNew(STextBlock)
-                        .Text(FText::FromString(HintLabel))
-                        .ColorAndOpacity(FLinearColor(0.55f, 0.55f, 0.55f))] +
-             SHorizontalBox::Slot().FillWidth(1.0f).Padding(
-                 8, 2)[SNew(STextBlock)
-                           .Text(FText::FromString(Description))
-                           .ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))]];
+  // Primary on the left at its natural width; description fills the rest
+  // and wraps. Without FillWidth + AutoWrapText, a long description would
+  // expand the row's intrinsic width and push the popup beyond the input.
+  return SNew(STableRow<TSharedPtr<UAgent::FAvailableCommand>>, Owner)
+      [SNew(SHorizontalBox) +
+       SHorizontalBox::Slot()
+           .AutoWidth()
+           .VAlign(VAlign_Top)
+           .Padding(4, 2)[SNew(STextBlock).Text(FText::FromString(Primary))] +
+       SHorizontalBox::Slot()
+           .FillWidth(1.0f)
+           .VAlign(VAlign_Top)
+           .Padding(4, 2)[SNew(STextBlock)
+                              .Text(FText::FromString(Secondary))
+                              .ColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.5f))
+                              .AutoWrapText(true)]];
 }
 
 void SACPCommandPicker::OnSelectionChanged(

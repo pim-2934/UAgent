@@ -27,30 +27,51 @@ TSharedRef<SWidget> SACPMentionPicker::BuildPopupContent() {
       .OnSelectionChanged(this, &SACPMentionPicker::OnSelectionChanged)
       .SelectionMode(ESelectionMode::Single);
 
-  return SNew(SBox).MinDesiredWidth(360).MaxDesiredHeight(
-      260)[SNew(SVerticalBox) +
-           SVerticalBox::Slot().AutoHeight()
-               [SAssignNew(SearchBox, SEditableTextBox)
-                    .HintText(LOCTEXT("MentionHint", "Search assets…"))
-                    .OnTextChanged_Lambda([this](const FText &T) {
-                      RefreshResults(T.ToString());
-                    })] +
-           SVerticalBox::Slot().FillHeight(1.0f)[ResultsList.ToSharedRef()]];
+  // Pin popup width to the anchored input box — keeps long asset paths
+  // from pushing the popup wider than the chat. Lambda evaluates at
+  // layout time, by which point Anchor is fully constructed.
+  return SNew(SBox)
+      .WidthOverride_Lambda([this]() -> FOptionalSize {
+        if (Anchor.IsValid()) {
+          const float W = Anchor->GetCachedGeometry().GetLocalSize().X;
+          if (W > 0.0f)
+            return W;
+        }
+        return 360.0f;
+      })
+      .MaxDesiredHeight(
+          260)[SNew(SVerticalBox) +
+               SVerticalBox::Slot().AutoHeight()
+                   [SAssignNew(SearchBox, SEditableTextBox)
+                        .HintText(LOCTEXT("MentionHint", "Search assets…"))
+                        .OnTextChanged_Lambda([this](const FText &T) {
+                          RefreshResults(T.ToString());
+                        })] +
+               SVerticalBox::Slot().FillHeight(
+                   1.0f)[ResultsList.ToSharedRef()]];
 }
 
 TSharedRef<ITableRow>
 SACPMentionPicker::OnGenerateRow(TSharedPtr<FAssetData> Item,
                                  const TSharedRef<STableViewBase> &Owner) {
-  return SNew(
-      STableRow<TSharedPtr<FAssetData>>,
-      Owner)[SNew(SHorizontalBox) +
-             SHorizontalBox::Slot().FillWidth(1.0f).Padding(
-                 4,
-                 2)[SNew(STextBlock).Text(FText::FromName(Item->AssetName))] +
-             SHorizontalBox::Slot().AutoWidth().Padding(
-                 4, 2)[SNew(STextBlock)
-                           .Text(FText::FromName(Item->PackagePath))
-                           .ColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.5f))]];
+  // Primary on the left at natural width; path fills remaining space and
+  // wraps if long. Keeps the popup pinned to the input width — without
+  // FillWidth + AutoWrapText, long `/Game/Sub/Sub/Path` paths would
+  // expand the row and push the popup beyond the input.
+  return SNew(STableRow<TSharedPtr<FAssetData>>, Owner)
+      [SNew(SHorizontalBox) +
+       SHorizontalBox::Slot()
+           .AutoWidth()
+           .VAlign(VAlign_Top)
+           .Padding(
+               4, 2)[SNew(STextBlock).Text(FText::FromName(Item->AssetName))] +
+       SHorizontalBox::Slot()
+           .FillWidth(1.0f)
+           .VAlign(VAlign_Top)
+           .Padding(4, 2)[SNew(STextBlock)
+                              .Text(FText::FromName(Item->PackagePath))
+                              .ColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.5f))
+                              .AutoWrapText(true)]];
 }
 
 void SACPMentionPicker::OnSelectionChanged(TSharedPtr<FAssetData> Item,

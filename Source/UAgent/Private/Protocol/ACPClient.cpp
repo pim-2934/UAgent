@@ -54,6 +54,7 @@ void FACPClient::Stop() {
   AvailableModes.Reset();
   CurrentModeId.Reset();
   AvailableCommands.Reset();
+  CurrentPlan.Reset();
   OnAgentSettingsChanged.Broadcast();
   SetState(EClientState::Disconnected);
   bStopping = false;
@@ -154,6 +155,11 @@ void FACPClient::SendInitialize() {
             }
           }
         }
+        UE_LOG(LogUAgent, Log,
+               TEXT("Agent capabilities: mcp.http=%d, sessions.list=%d, "
+                    "sessions.load=%d"),
+               bAgentSupportsHttpMcp ? 1 : 0, bAgentSupportsSessionList ? 1 : 0,
+               bAgentSupportsSessionLoad ? 1 : 0);
         SendNewSession();
       });
 }
@@ -208,19 +214,27 @@ void FACPClient::SendNewSession() {
           ParseConfigOptions(*ConfigArr, ConfigOptions);
         }
 
-        // ACP `modes` object — { current_mode_id, available_modes: [...] }.
-        // Agents that don't support modes omit it; the UI dropdown will hide.
+        // ACP `modes` object — spec says camelCase
+        // ({currentModeId, availableModes}) but older Claude CLI builds
+        // emit snake_case ({current_mode_id, available_modes}). Accept both
+        // so the dropdown survives an adapter version change.
         AvailableModes.Reset();
         CurrentModeId.Reset();
         const TSharedPtr<FJsonObject> *ModesObj = nullptr;
         if (Result->TryGetObjectField(TEXT("modes"), ModesObj) && ModesObj &&
             ModesObj->IsValid()) {
-          (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
-                                         CurrentModeId);
+          if (!(*ModesObj)->TryGetStringField(TEXT("currentModeId"),
+                                              CurrentModeId)) {
+            (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
+                                           CurrentModeId);
+          }
           const TArray<TSharedPtr<FJsonValue>> *ModesArr = nullptr;
-          if ((*ModesObj)->TryGetArrayField(TEXT("available_modes"),
-                                            ModesArr) &&
-              ModesArr) {
+          if (!(*ModesObj)->TryGetArrayField(TEXT("availableModes"),
+                                             ModesArr) ||
+              !ModesArr) {
+            (*ModesObj)->TryGetArrayField(TEXT("available_modes"), ModesArr);
+          }
+          if (ModesArr) {
             ParseSessionModes(*ModesArr, AvailableModes);
           }
         }
@@ -235,6 +249,11 @@ void FACPClient::SendNewSession() {
             CmdArr) {
           ParseAvailableCommands(*CmdArr, AvailableCommands);
         }
+
+        // Fresh session — no plan yet. A previous Stop() already cleared
+        // this, but resetting here keeps the invariant tight if Start()
+        // is ever reused without a paired Stop().
+        CurrentPlan.Reset();
 
         OnAgentSettingsChanged.Broadcast();
 
@@ -351,6 +370,7 @@ void FACPClient::LoadSession(const FString &SessionIdToLoad) {
   AvailableModes.Reset();
   CurrentModeId.Reset();
   AvailableCommands.Reset();
+  CurrentPlan.Reset();
   OnAgentSettingsChanged.Broadcast();
 
   SetState(EClientState::CreatingSession);
@@ -399,12 +419,18 @@ void FACPClient::LoadSession(const FString &SessionIdToLoad) {
           const TSharedPtr<FJsonObject> *ModesObj = nullptr;
           if (Result->TryGetObjectField(TEXT("modes"), ModesObj) && ModesObj &&
               ModesObj->IsValid()) {
-            (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
-                                           CurrentModeId);
+            if (!(*ModesObj)->TryGetStringField(TEXT("currentModeId"),
+                                                CurrentModeId)) {
+              (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
+                                             CurrentModeId);
+            }
             const TArray<TSharedPtr<FJsonValue>> *ModesArr = nullptr;
-            if ((*ModesObj)->TryGetArrayField(TEXT("available_modes"),
-                                              ModesArr) &&
-                ModesArr) {
+            if (!(*ModesObj)->TryGetArrayField(TEXT("availableModes"),
+                                               ModesArr) ||
+                !ModesArr) {
+              (*ModesObj)->TryGetArrayField(TEXT("available_modes"), ModesArr);
+            }
+            if (ModesArr) {
               ParseSessionModes(*ModesArr, AvailableModes);
             }
           }
@@ -444,6 +470,13 @@ void FACPClient::HandleNotification(const FString &Method,
                  FSessionUpdate::EKind::AvailableCommandsUpdate) {
         AvailableCommands = Update.AvailableCommands;
         bSettingsChanged = true;
+      } else if (Update.Kind == FSessionUpdate::EKind::Plan) {
+        // Per spec, each `plan` notification is a full replacement — store
+        // verbatim. Subscribers receive the same payload via OnSessionUpdate
+        // so this is mostly so a late-attaching consumer (e.g. a re-opened
+        // chat tab on a live session) can read the current plan without
+        // waiting for the next update.
+        CurrentPlan = Update.PlanEntries;
       }
 
       OnSessionUpdate.Broadcast(Update);
