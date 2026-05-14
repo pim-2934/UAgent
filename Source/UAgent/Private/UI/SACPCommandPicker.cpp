@@ -35,25 +35,25 @@ SACPCommandPicker::OnGenerateRow(TSharedPtr<UAgent::FAvailableCommand> Item,
   // without scanning; the description fills the remaining width.
   const FString NameLabel =
       Item.IsValid() ? FString::Printf(TEXT("/%s"), *Item->Name) : FString();
-  const FString HintLabel =
-      (Item.IsValid() && !Item->InputHint.IsEmpty())
-          ? FString::Printf(TEXT(" %s"), *Item->InputHint)
-          : FString();
+  const FString HintLabel = (Item.IsValid() && !Item->InputHint.IsEmpty())
+                                ? FString::Printf(TEXT(" %s"), *Item->InputHint)
+                                : FString();
   const FString Description = Item.IsValid() ? Item->Description : FString();
 
-  return SNew(STableRow<TSharedPtr<UAgent::FAvailableCommand>>, Owner)
-      [SNew(SHorizontalBox) +
-       SHorizontalBox::Slot()
-           .AutoWidth()
-           .Padding(4, 2)[SNew(STextBlock).Text(FText::FromString(NameLabel))] +
-       SHorizontalBox::Slot().AutoWidth().Padding(
-           0, 2)[SNew(STextBlock)
-                     .Text(FText::FromString(HintLabel))
-                     .ColorAndOpacity(FLinearColor(0.55f, 0.55f, 0.55f))] +
-       SHorizontalBox::Slot().FillWidth(1.0f).Padding(
-           8, 2)[SNew(STextBlock)
-                     .Text(FText::FromString(Description))
-                     .ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))]];
+  return SNew(
+      STableRow<TSharedPtr<UAgent::FAvailableCommand>>,
+      Owner)[SNew(SHorizontalBox) +
+             SHorizontalBox::Slot().AutoWidth().Padding(
+                 4, 2)[SNew(STextBlock).Text(FText::FromString(NameLabel))] +
+             SHorizontalBox::Slot().AutoWidth().Padding(
+                 0,
+                 2)[SNew(STextBlock)
+                        .Text(FText::FromString(HintLabel))
+                        .ColorAndOpacity(FLinearColor(0.55f, 0.55f, 0.55f))] +
+             SHorizontalBox::Slot().FillWidth(1.0f).Padding(
+                 8, 2)[SNew(STextBlock)
+                           .Text(FText::FromString(Description))
+                           .ColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f))]];
 }
 
 void SACPCommandPicker::OnSelectionChanged(

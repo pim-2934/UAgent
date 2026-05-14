@@ -84,6 +84,31 @@ public:
   /** Sends a session/cancel notification. */
   void CancelPrompt();
 
+  /** Result callback for ListSessions — empty array + non-empty Error on
+   * failure, populated array + empty Error on success. */
+  using FListSessionsCallback =
+      TFunction<void(TArray<FSessionInfo> /*Sessions*/, FString /*Error*/)>;
+
+  /**
+   * Sends `session/list` filtered to the current project's cwd. Requires the
+   * agent to advertise `sessionCapabilities.list` — callers should gate the
+   * UI on SupportsSessionList() rather than catching the error here. The
+   * callback fires on the game thread once. Pagination (`nextCursor`) is
+   * intentionally ignored in this phase: we surface the first page only.
+   */
+  void ListSessions(FListSessionsCallback Callback);
+
+  /**
+   * Sends `session/load` to replay an existing session. Drops local state
+   * (config options, modes, current commands) so the agent's replayed
+   * `session/update` notifications can repopulate from scratch. Requires
+   * State == Ready and the agent to advertise `sessionCapabilities.load`.
+   * Conversation replay reaches the chat via the normal OnSessionUpdate
+   * fanout — no special handling needed on the UI side beyond clearing the
+   * message log before calling.
+   */
+  void LoadSession(const FString &SessionIdToLoad);
+
   /**
    * Sets one of the agent's advertised config options (model, …). No-op when
    * SessionId is empty. Optimistically updates the local snapshot; the
@@ -126,6 +151,15 @@ public:
     return AvailableCommands;
   }
 
+  /** True when the agent advertised `sessionCapabilities.list` in
+   * `initialize` — gates the History dropdown in the chat UI. */
+  bool SupportsSessionList() const { return bAgentSupportsSessionList; }
+
+  /** True when the agent advertised `sessionCapabilities.load` — gates
+   * actually invoking session/load from a History pick. Most agents that
+   * support list also support load, but the spec treats them independently. */
+  bool SupportsSessionLoad() const { return bAgentSupportsSessionLoad; }
+
   FOnClientStateChanged OnStateChanged;
   FOnSessionUpdateDelegate OnSessionUpdate;
   FOnPromptCompleted OnPromptCompleted;
@@ -163,6 +197,8 @@ private:
 
   FString McpServerUrl;
   bool bAgentSupportsHttpMcp = false;
+  bool bAgentSupportsSessionList = false;
+  bool bAgentSupportsSessionLoad = false;
 
   TArray<FConfigOption> ConfigOptions;
 

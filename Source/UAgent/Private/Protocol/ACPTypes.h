@@ -118,6 +118,28 @@ struct FAvailableCommand {
 void ParseAvailableCommands(const TArray<TSharedPtr<FJsonValue>> &In,
                             TArray<FAvailableCommand> &Out);
 
+/**
+ * One entry in a `session/list` result — describes a past session the agent
+ * remembers and can replay via `session/load`. `Title` and `UpdatedAt` are
+ * optional in the spec; clients are expected to fall back gracefully (display
+ * a truncated sessionId, omit the timestamp, etc.).
+ */
+struct FSessionInfo {
+  FString SessionId;
+  FString Cwd;
+  FString Title;
+  /** ISO-8601 string as advertised by the agent; not parsed — surfaced as-is
+   * so the UI can display it without losing precision. */
+  FString UpdatedAt;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj, FSessionInfo &Out);
+};
+
+/** Parses a JSON array of SessionInfo objects. Resets Out before populating;
+ * malformed entries (missing sessionId) are skipped. */
+void ParseSessionInfos(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionInfo> &Out);
+
 /** Stop reasons returned by session/prompt. */
 enum class EStopReason : uint8 {
   EndTurn,

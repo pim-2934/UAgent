@@ -202,6 +202,33 @@ void ParseAvailableCommands(const TArray<TSharedPtr<FJsonValue>> &In,
   }
 }
 
+bool FSessionInfo::FromJson(const TSharedRef<FJsonObject> &Obj,
+                            FSessionInfo &Out) {
+  if (!Obj->TryGetStringField(TEXT("sessionId"), Out.SessionId) ||
+      Out.SessionId.IsEmpty()) {
+    return false;
+  }
+  Obj->TryGetStringField(TEXT("cwd"), Out.Cwd);
+  Obj->TryGetStringField(TEXT("title"), Out.Title);
+  Obj->TryGetStringField(TEXT("updatedAt"), Out.UpdatedAt);
+  return true;
+}
+
+void ParseSessionInfos(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionInfo> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FSessionInfo Info;
+    if (FSessionInfo::FromJson(Obj->ToSharedRef(), Info)) {
+      Out.Add(MoveTemp(Info));
+    }
+  }
+}
+
 void ParseSessionModes(const TArray<TSharedPtr<FJsonValue>> &In,
                        TArray<FSessionMode> &Out) {
   Out.Reset();

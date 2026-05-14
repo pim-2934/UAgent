@@ -25,9 +25,11 @@
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
+#include "Widgets/Input/SMenuAnchor.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
@@ -176,6 +178,45 @@ TSharedRef<SWidget> SACPChatWindow::BuildHeader() {
                [SAssignNew(StatusLabel, STextBlock)
                     .Text_Lambda([this] { return GetStatusText(); })
                     .ColorAndOpacity(FLinearColor(0.65f, 0.65f, 0.65f, 1.0f))] +
+           SHorizontalBox::Slot().AutoWidth().Padding(
+               4,
+               0)[SAssignNew(HistoryAnchor, SMenuAnchor)
+                      .Placement(MenuPlacement_BelowAnchor)
+                      .OnGetMenuContent_Lambda([this]() {
+                        return BuildHistoryMenuContent();
+                      })[SNew(SButton)
+                             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                             .ContentPadding(FMargin(0))
+                             .HAlign(HAlign_Center)
+                             .VAlign(VAlign_Center)
+                             .ToolTipText(LOCTEXT("HistoryTip",
+                                                  "Resume a previous session"))
+                             // Hidden entirely when the agent doesn't
+                             // advertise both list AND load — listing without
+                             // load would surface picks we can't act on.
+                             .Visibility_Lambda([this]() {
+                               return (Client.IsValid() &&
+                                       Client->SupportsSessionList() &&
+                                       Client->SupportsSessionLoad())
+                                          ? EVisibility::Visible
+                                          : EVisibility::Collapsed;
+                             })
+                             .IsEnabled_Lambda(
+                                 [this]() { return !bHistoryRequestInFlight; })
+                             .OnClicked(this, &SACPChatWindow::OnHistoryClicked)
+                                 [SNew(SBox)
+                                      .WidthOverride(24.f)
+                                      .HeightOverride(24.f)
+                                      .HAlign(HAlign_Center)
+                                      .VAlign(VAlign_Center)
+                                          [SNew(SImage)
+                                               .Image(FAppStyle::Get().GetBrush(
+                                                   "Icons.Recent"))
+                                               .DesiredSizeOverride(
+                                                   FVector2D(16, 16))
+                                               .ColorAndOpacity(
+                                                   FSlateColor::
+                                                       UseForeground())]]]] +
            SHorizontalBox::Slot().AutoWidth().Padding(
                4,
                0)[SNew(SButton)
@@ -588,6 +629,173 @@ void SACPChatWindow::StartSession() {
 FReply SACPChatWindow::OnNewSessionClicked() {
   StartSession();
   return FReply::Handled();
+}
+
+FReply SACPChatWindow::OnHistoryClicked() {
+  if (!Client.IsValid() || bHistoryRequestInFlight) {
+    return FReply::Handled();
+  }
+  if (!Client->SupportsSessionList() || !Client->SupportsSessionLoad()) {
+    // Defensive — the button is collapsed in this case, so we shouldn't
+    // get here. If somebody triggers this via accessibility/keyboard,
+    // fail quiet rather than firing a request we know will reject.
+    return FReply::Handled();
+  }
+
+  bHistoryRequestInFlight = true;
+  LastHistoryError.Reset();
+
+  TWeakPtr<SACPChatWindow> WeakSelf(SharedThis(this));
+  Client->ListSessions(
+      [WeakSelf](TArray<UAgent::FSessionInfo> Sessions, FString Error) {
+        TSharedPtr<SACPChatWindow> Self = WeakSelf.Pin();
+        if (!Self.IsValid())
+          return;
+        Self->bHistoryRequestInFlight = false;
+        Self->RecentSessions = MoveTemp(Sessions);
+        Self->LastHistoryError = MoveTemp(Error);
+        // SetIsOpen triggers OnGetMenuContent_Lambda → BuildHistoryMenuContent,
+        // which now sees the freshly-populated RecentSessions.
+        if (Self->HistoryAnchor.IsValid()) {
+          Self->HistoryAnchor->SetIsOpen(true);
+        }
+      });
+  return FReply::Handled();
+}
+
+namespace {
+// Best-effort ISO-8601 → local "MMM d, h:mm a" / "today h:mm a" formatter.
+// Falls back to the raw string when parsing fails — the spec marks
+// updatedAt optional and unparseable timestamps shouldn't break the menu.
+FString FormatSessionTimestamp(const FString &Iso) {
+  if (Iso.IsEmpty())
+    return FString();
+  FDateTime Parsed;
+  if (!FDateTime::ParseIso8601(*Iso, Parsed)) {
+    return Iso;
+  }
+  const FDateTime LocalNow = FDateTime::Now();
+  const FDateTime LocalParsed =
+      Parsed + (LocalNow - FDateTime::UtcNow()); // crude UTC→local shift
+  const bool bToday = LocalParsed.GetDate() == LocalNow.GetDate();
+  if (bToday) {
+    return LocalParsed.ToString(TEXT("today %H:%M"));
+  }
+  return LocalParsed.ToString(TEXT("%b %d %H:%M"));
+}
+} // namespace
+
+TSharedRef<SWidget> SACPChatWindow::BuildHistoryMenuContent() {
+  // Status branches first — keeps the empty-state path readable.
+  if (!LastHistoryError.IsEmpty()) {
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+        .Padding(FMargin(
+            10,
+            6))[SNew(STextBlock)
+                    .Text(FText::Format(
+                        LOCTEXT("HistoryFailed", "Couldn't list sessions: {0}"),
+                        FText::FromString(LastHistoryError)))
+                    .ColorAndOpacity(FLinearColor(0.95f, 0.55f, 0.55f))];
+  }
+  if (RecentSessions.Num() == 0) {
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+        .Padding(FMargin(
+            10, 6))[SNew(STextBlock)
+                        .Text(LOCTEXT("HistoryEmpty", "No previous sessions "
+                                                      "for this project."))
+                        .ColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f))];
+  }
+
+  TSharedRef<SVerticalBox> Rows = SNew(SVerticalBox);
+  // Cap the menu — surfacing 200 sessions in a popup is hostile, and the
+  // user can always reopen for a fresh fetch if they need older ones.
+  constexpr int32 MaxEntries = 25;
+  const int32 Count = FMath::Min(RecentSessions.Num(), MaxEntries);
+  for (int32 i = 0; i < Count; ++i) {
+    const UAgent::FSessionInfo &Info = RecentSessions[i];
+    const FString DisplayTitle =
+        Info.Title.IsEmpty()
+            ? FString::Printf(TEXT("Session %s"), *Info.SessionId.Left(8))
+            : Info.Title;
+    const FString TimestampLine = FormatSessionTimestamp(Info.UpdatedAt);
+    const FString SessionIdCopy = Info.SessionId;
+
+    Rows->AddSlot().AutoHeight()
+        [SNew(SButton)
+             .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+             .ContentPadding(FMargin(8, 4))
+             .HAlign(HAlign_Fill)
+             .OnClicked_Lambda([this, SessionIdCopy]() -> FReply {
+               OnHistoryEntryPicked(SessionIdCopy);
+               return FReply::Handled();
+             })[SNew(SHorizontalBox) +
+                SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+                    [SNew(STextBlock).Text(FText::FromString(DisplayTitle))] +
+                SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(12, 0, 0, 0)
+                    .VAlign(VAlign_Center)[SNew(STextBlock)
+                                               .Text(FText::FromString(
+                                                   TimestampLine))
+                                               .ColorAndOpacity(FLinearColor(
+                                                   0.55f, 0.55f, 0.55f))]]];
+  }
+
+  if (RecentSessions.Num() > MaxEntries) {
+    Rows->AddSlot().AutoHeight().Padding(
+        8,
+        4)[SNew(STextBlock)
+               .Text(FText::Format(LOCTEXT("HistoryTruncated",
+                                           "…showing {0} most recent of {1}"),
+                                   FText::AsNumber(MaxEntries),
+                                   FText::AsNumber(RecentSessions.Num())))
+               .ColorAndOpacity(FLinearColor(0.5f, 0.5f, 0.5f))];
+  }
+
+  return SNew(SBorder)
+      .BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+      .Padding(FMargin(2))[SNew(SBox).MinDesiredWidth(360).MaxDesiredHeight(
+          360)[SNew(SScrollBox) + SScrollBox::Slot()[Rows]]];
+}
+
+void SACPChatWindow::OnHistoryEntryPicked(const FString &SessionIdToLoad) {
+  if (!Client.IsValid() || SessionIdToLoad.IsEmpty())
+    return;
+
+  // Close the popup before we mutate UI state — leaving it open while the
+  // log resets looks like a glitch.
+  if (HistoryAnchor.IsValid()) {
+    HistoryAnchor->SetIsOpen(false);
+  }
+
+  // Resolve outstanding broker prompts the way StartSession does — the
+  // current session is about to be swapped out, so any pending callbacks
+  // would address a stale message log if they fire later.
+  for (auto &KV : PendingPermissions) {
+    if (KV.Value)
+      KV.Value(UAgent::EPermissionOutcome::Deny);
+  }
+  PendingPermissions.Reset();
+  for (auto &KV : PendingProposals) {
+    if (KV.Value.Complete)
+      KV.Value.Complete(UAgent::EProposalOutcome::Cancelled);
+  }
+  PendingProposals.Reset();
+  UAgent::FProposalBroker::Get().ResetTurn();
+
+  // Wipe the chat — the agent will replay the loaded session's history via
+  // session/update notifications, which go through the existing
+  // OnSessionUpdate handler and rebuild the log from scratch.
+  if (MessageLog.IsValid()) {
+    MessageLog->Reset();
+    MessageLog->AppendSystem(TEXT("Resuming previous session…"),
+                             FLinearColor(0.6f, 0.75f, 0.95f));
+  }
+  bProjectContextSent = true; // loaded session already has AGENTS.md context
+
+  Client->LoadSession(SessionIdToLoad);
 }
 
 FReply SACPChatWindow::OnExportClicked() {

@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "CoreMinimal.h"
+#include "Protocol/ACPTypes.h"
 #include "Templates/Function.h"
 #include "Templates/SharedPointer.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
@@ -11,15 +12,12 @@ class FJsonObject;
 
 namespace UAgent {
 class FACPClient;
-struct FAvailableCommand;
-struct FSessionUpdate;
 struct FPermissionRequest;
 struct FProposalRequest;
 enum class EClientState : uint8;
 enum class EStopReason : uint8;
 enum class EPermissionOutcome : uint8;
 enum class EProposalOutcome : uint8;
-struct FContentBlock;
 } // namespace UAgent
 
 enum class EProposalRowDecision : uint8;
@@ -30,6 +28,7 @@ class SACPContextStrip;
 class SACPMentionPicker;
 class SACPMessageList;
 class SHorizontalBox;
+class SMenuAnchor;
 class SMultiLineEditableTextBox;
 class STextBlock;
 
@@ -63,6 +62,14 @@ private:
   FReply OnSendClicked();
   FReply OnNewSessionClicked();
   FReply OnExportClicked();
+  FReply OnHistoryClicked();
+  /** Built lazily by the SMenuAnchor each time it opens — reads from
+   * RecentSessions which OnHistoryClicked populates before opening. */
+  TSharedRef<SWidget> BuildHistoryMenuContent();
+  /** Called when the user picks a session from the history menu — clears the
+   * chat log so replayed session/update notifications can rebuild it from
+   * scratch, then asks the client to swap to the chosen session. */
+  void OnHistoryEntryPicked(const FString &SessionIdToLoad);
   FReply OnInputKey(const FGeometry &, const FKeyEvent &Key);
   void OnInputTextChanged(const FText &NewText);
   FText GetStatusText() const;
@@ -120,6 +127,19 @@ private:
   TSharedPtr<STextBlock> StatusLabel;
   TSharedPtr<SACPMentionPicker> MentionPicker;
   TSharedPtr<SACPCommandPicker> CommandPicker;
+  TSharedPtr<SMenuAnchor> HistoryAnchor;
+
+  // Most-recent ListSessions result. Refilled on every history-button click;
+  // BuildHistoryMenuContent reads this when the SMenuAnchor opens (which
+  // happens *after* the request resolves, so the menu is never empty when
+  // built from a successful response).
+  TArray<UAgent::FSessionInfo> RecentSessions;
+  // Set while a session/list request is in flight to block double-clicks and
+  // drive the disabled state on the history button.
+  bool bHistoryRequestInFlight = false;
+  // Non-empty if the last ListSessions invocation returned an error; rendered
+  // inside the menu so the user sees why the list is empty.
+  FString LastHistoryError;
 
   // Pending permission callbacks keyed by the per-row UUID assigned in
   // FChatMessageLog::AppendPermission. Stable across log mutations, unlike
