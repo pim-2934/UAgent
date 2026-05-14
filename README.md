@@ -13,7 +13,8 @@ https://github.com/user-attachments/assets/1e08db26-0494-4bf5-b88e-bbbe2756e5bf
 - **Tool-call cards** — rendered inline with status (pending / in-progress / completed).
 - **Auto context** — whatever assets you have open in the editor are attached to each message automatically, so the agent sees what you're working on. Toggle with **Auto-Include Open Assets**.
 - **@-mention** — type `@` in the input to pick any project asset from a live-filtered list. Adds a chip you can remove.
-- **Permission gating** — pick **Full Access**, **Read Only**, or **Default** from the dropdown at the bottom of the chat. In **Default** mode, mutating tool calls surface a permission card with an **Accept / Cancel** prompt and the raw arguments the agent wants to pass; read-only tools auto-allow. The chosen mode is persisted per user.
+- **Mode picker** — when the agent advertises session modes (Claude's *default* / *acceptEdits* / *plan* / *bypassPermissions*, Codex's *read-only* / *default* / *full-access*), a **Mode:** dropdown appears at the bottom of the chat. The mode set is whatever the backing agent broadcasts in `session/new`; switching sends `session/set_mode` and the agent's `current_mode_update` notification keeps the UI in sync. Your pick is persisted per user and re-applied on subsequent sessions when the mode is still offered.
+- **Permission cards** — for mutating tools the agent didn't pre-approve under the current mode, an **Accept / Cancel** card with the raw arguments appears inline in the chat; read-only tools auto-allow.
 - **Model picker** — when the agent advertises model options (the Claude CLI does), a **Model:** dropdown appears next to the mode dropdown. Your pick is persisted per user and re-applied on subsequent sessions when the model is still offered.
 - **Export transcript** — save the current chat as Markdown via the export button in the header.
 - **Tools** — the agent can read/write project files, inspect and edit Blueprints, drive the editor, and more. See [TOOLS.md](TOOLS.md) for the full list.
@@ -90,7 +91,7 @@ npm install -g @zed-industries/codex-acp
 | **Enable MCP Server** | ✓ (default) |
 | **MCP Server Port** | `47777` (default) |
 
-Permission Mode and Model are picked from the dropdowns at the bottom of the chat window (not in Project Settings) and persisted per user under `EditorPerProjectUserSettings.ini` so the choice doesn't leak into the project's shared config.
+Session Mode and Model are picked from the dropdowns at the bottom of the chat window (not in Project Settings) and persisted per user under `EditorPerProjectUserSettings.ini` so the choice doesn't leak into the project's shared config.
 
 ### First run
 

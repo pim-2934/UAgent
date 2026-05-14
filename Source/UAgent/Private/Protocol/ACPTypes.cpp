@@ -163,6 +163,31 @@ void ParseConfigOptions(const TArray<TSharedPtr<FJsonValue>> &In,
   }
 }
 
+bool FSessionMode::FromJson(const TSharedRef<FJsonObject> &Obj,
+                            FSessionMode &Out) {
+  if (!Obj->TryGetStringField(TEXT("id"), Out.Id) || Out.Id.IsEmpty()) {
+    return false;
+  }
+  Obj->TryGetStringField(TEXT("name"), Out.Name);
+  Obj->TryGetStringField(TEXT("description"), Out.Description);
+  return true;
+}
+
+void ParseSessionModes(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionMode> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FSessionMode Mode;
+    if (FSessionMode::FromJson(Obj->ToSharedRef(), Mode)) {
+      Out.Add(MoveTemp(Mode));
+    }
+  }
+}
+
 EStopReason ParseStopReason(const FString &In) {
   if (In == TEXT("end_turn"))
     return EStopReason::EndTurn;
@@ -280,6 +305,7 @@ bool FSessionUpdate::FromJson(const TSharedRef<FJsonObject> &Params,
   }
   if (Kind == TEXT("current_mode_update")) {
     Out.Kind = EKind::CurrentModeUpdate;
+    (*UpdateObj)->TryGetStringField(TEXT("current_mode_id"), Out.CurrentModeId);
     return true;
   }
   if (Kind == TEXT("config_option_update")) {

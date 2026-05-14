@@ -8,49 +8,28 @@ UUAgentSettings::UUAgentSettings() {
 }
 
 namespace UAgent {
-namespace PermissionModeStore {
-// Stored as a string under EditorPerProjectUserSettings.ini so it persists
-// per-user without polluting the project's shared Engine.ini.
+namespace SessionModeStore {
+// Stored as the agent's mode id string under EditorPerProjectUserSettings.ini
+// so it persists per-user without polluting the project's shared Engine.ini.
+// Agent-specific — when the saved id isn't in the current agent's advertised
+// set, callers ignore it and fall back to the agent's current_mode_id.
 static const TCHAR *Section = TEXT("/Script/UAgent.ChatWindow");
-static const TCHAR *Key = TEXT("PermissionMode");
+static const TCHAR *Key = TEXT("SessionMode");
 
-static const TCHAR *ToString(EACPPermissionMode Mode) {
-  switch (Mode) {
-  case EACPPermissionMode::ReadOnly:
-    return TEXT("ReadOnly");
-  case EACPPermissionMode::Default:
-    return TEXT("Default");
-  case EACPPermissionMode::FullAccess:
-  default:
-    return TEXT("FullAccess");
-  }
-}
-
-static EACPPermissionMode FromString(const FString &S) {
-  if (S.Equals(TEXT("ReadOnly"), ESearchCase::IgnoreCase))
-    return EACPPermissionMode::ReadOnly;
-  if (S.Equals(TEXT("Default"), ESearchCase::IgnoreCase))
-    return EACPPermissionMode::Default;
-  return EACPPermissionMode::FullAccess;
-}
-
-EACPPermissionMode Load() {
+FString Load() {
   FString Value;
-  if (GConfig &&
-      GConfig->GetString(Section, Key, Value, GEditorPerProjectIni) &&
-      !Value.IsEmpty()) {
-    return FromString(Value);
-  }
-  return EACPPermissionMode::FullAccess;
+  if (GConfig)
+    GConfig->GetString(Section, Key, Value, GEditorPerProjectIni);
+  return Value;
 }
 
-void Save(EACPPermissionMode Mode) {
+void Save(const FString &ModeId) {
   if (!GConfig)
     return;
-  GConfig->SetString(Section, Key, ToString(Mode), GEditorPerProjectIni);
+  GConfig->SetString(Section, Key, *ModeId, GEditorPerProjectIni);
   GConfig->Flush(false, GEditorPerProjectIni);
 }
-} // namespace PermissionModeStore
+} // namespace SessionModeStore
 
 namespace ModelStore {
 static const TCHAR *Section = TEXT("/Script/UAgent.ChatWindow");

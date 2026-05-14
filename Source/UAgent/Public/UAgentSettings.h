@@ -4,35 +4,27 @@
 #include "Engine/DeveloperSettings.h"
 #include "UAgentSettings.generated.h"
 
-/**
- * Governs how session/request_permission is answered. Surfaced as a dropdown
- * under the chat input; persisted per-user via PermissionModeStore (not in
- * UUAgentSettings, so it doesn't leak into the project's shared config).
- */
-UENUM()
-enum class EACPPermissionMode : uint8 {
-  ReadOnly UMETA(DisplayName = "Read Only"),
-  Default UMETA(DisplayName = "Default"),
-  FullAccess UMETA(DisplayName = "Full Access")
-};
-
 namespace UAgent {
 /**
- * Per-user persistence for the chat window's selected permission mode. Backed
- * by GEditorPerProjectIni so the choice survives editor restarts without
- * being committed to the project's shared Engine.ini.
+ * Per-user persistence for the user's preferred ACP session mode. Stored as
+ * the agent's mode `id` string (e.g. "plan", "acceptEdits" for Claude;
+ * "read-only", "default" for Codex), which is agent-specific — empty when no
+ * preference has been picked yet, or when the saved value isn't in the
+ * current agent's advertised set. Backed by GEditorPerProjectIni so the
+ * choice survives editor restarts without being committed to the project's
+ * shared Engine.ini.
  */
-namespace PermissionModeStore {
-UAGENT_API EACPPermissionMode Load();
-UAGENT_API void Save(EACPPermissionMode Mode);
-} // namespace PermissionModeStore
+namespace SessionModeStore {
+UAGENT_API FString Load();
+UAGENT_API void Save(const FString &ModeId);
+} // namespace SessionModeStore
 
 /**
  * Per-user persistence for the user's preferred agent model. Stored as the
  * raw `value` string from the agent's configOptions (e.g. "claude-opus-4-5"),
  * which is agent-specific — empty when no preference has been picked yet, or
  * when the saved value isn't offered by the current agent. Same backing store
- * as PermissionModeStore.
+ * as SessionModeStore.
  */
 namespace ModelStore {
 UAGENT_API FString Load();

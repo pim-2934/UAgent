@@ -57,6 +57,25 @@ struct FConfigOptionChoice {
 };
 
 /**
+ * One ACP session mode advertised by the agent — Claude's "default" /
+ * "acceptEdits" / "plan" / "bypassPermissions", Codex's "read-only" /
+ * "default" / "full-access", etc. Switched via session/set_mode and refreshed
+ * by current_mode_update notifications.
+ */
+struct FSessionMode {
+  FString Id;
+  FString Name;
+  FString Description;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj, FSessionMode &Out);
+};
+
+/** Parses a JSON array of SessionMode objects. Resets Out before populating;
+ * malformed entries are skipped. */
+void ParseSessionModes(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionMode> &Out);
+
+/**
  * One ACP "session config option" — a typed selector advertised by the agent.
  * Category is conventional and signals UX intent: "model", "mode",
  * "thought_level" (reasoning effort), or empty/custom.
@@ -119,6 +138,9 @@ struct FSessionUpdate {
   // ConfigOptionUpdate: full advertised set, with currentValue reflecting the
   // agent's post-change state.
   TArray<FConfigOption> ConfigOptions;
+
+  // CurrentModeUpdate: id of the mode the agent has switched into.
+  FString CurrentModeId;
 
   // Fallback — raw object for kinds we don't model yet.
   TSharedPtr<FJsonObject> RawObject;

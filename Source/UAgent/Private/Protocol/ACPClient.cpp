@@ -51,6 +51,8 @@ void FACPClient::Stop() {
   Peer.Reset();
   SessionId.Reset();
   ConfigOptions.Reset();
+  AvailableModes.Reset();
+  CurrentModeId.Reset();
   OnAgentSettingsChanged.Broadcast();
   SetState(EClientState::Disconnected);
   bStopping = false;
@@ -192,10 +194,30 @@ void FACPClient::SendNewSession() {
             ConfigArr) {
           ParseConfigOptions(*ConfigArr, ConfigOptions);
         }
+
+        // ACP `modes` object — { current_mode_id, available_modes: [...] }.
+        // Agents that don't support modes omit it; the UI dropdown will hide.
+        AvailableModes.Reset();
+        CurrentModeId.Reset();
+        const TSharedPtr<FJsonObject> *ModesObj = nullptr;
+        if (Result->TryGetObjectField(TEXT("modes"), ModesObj) && ModesObj &&
+            ModesObj->IsValid()) {
+          (*ModesObj)->TryGetStringField(TEXT("current_mode_id"), CurrentModeId);
+          const TArray<TSharedPtr<FJsonValue>> *ModesArr = nullptr;
+          if ((*ModesObj)
+                  ->TryGetArrayField(TEXT("available_modes"), ModesArr) &&
+              ModesArr) {
+            ParseSessionModes(*ModesArr, AvailableModes);
+          }
+        }
+
         OnAgentSettingsChanged.Broadcast();
 
-        UE_LOG(LogUAgent, Log, TEXT("Session ready: %s (configOptions=%d)"),
-               *SessionId, ConfigOptions.Num());
+        UE_LOG(LogUAgent, Log,
+               TEXT("Session ready: %s (configOptions=%d, modes=%d, "
+                    "current='%s')"),
+               *SessionId, ConfigOptions.Num(), AvailableModes.Num(),
+               *CurrentModeId);
         SetState(EClientState::Ready);
       });
 }
@@ -246,13 +268,19 @@ void FACPClient::HandleNotification(const FString &Method,
   if (Method == TEXT("session/update") && Params.IsValid()) {
     FSessionUpdate Update;
     if (FSessionUpdate::FromJson(Params.ToSharedRef(), Update)) {
-      // Mirror agent-driven config-option changes into our local snapshot
-      // before fanning the update out, so subscribers querying
-      // GetConfigOptions() during their handler see the post-change state.
-      const bool bSettingsChanged =
-          Update.Kind == FSessionUpdate::EKind::ConfigOptionUpdate;
-      if (bSettingsChanged) {
+      // Mirror agent-driven config-option / mode changes into our local
+      // snapshot before fanning the update out, so subscribers querying
+      // GetConfigOptions() / GetCurrentModeId() during their handler see the
+      // post-change state.
+      bool bSettingsChanged = false;
+      if (Update.Kind == FSessionUpdate::EKind::ConfigOptionUpdate) {
         ConfigOptions = Update.ConfigOptions;
+        bSettingsChanged = true;
+      } else if (Update.Kind == FSessionUpdate::EKind::CurrentModeUpdate &&
+                 !Update.CurrentModeId.IsEmpty() &&
+                 Update.CurrentModeId != CurrentModeId) {
+        CurrentModeId = Update.CurrentModeId;
+        bSettingsChanged = true;
       }
 
       OnSessionUpdate.Broadcast(Update);
@@ -295,6 +323,39 @@ void FACPClient::SetConfigOption(const FString &ConfigId,
                        UE_LOG(LogUAgent, Warning,
                               TEXT("session/set_config_option failed: %s"),
                               *Msg);
+                     }
+                   });
+}
+
+void FACPClient::SetSessionMode(const FString &ModeId) {
+  if (SessionId.IsEmpty() || ModeId.IsEmpty())
+    return;
+  if (ModeId == CurrentModeId)
+    return;
+
+  const bool bAvailable = AvailableModes.ContainsByPredicate(
+      [&ModeId](const FSessionMode &M) { return M.Id == ModeId; });
+  if (!bAvailable) {
+    UE_LOG(LogUAgent, Warning,
+           TEXT("session/set_mode skipped: '%s' not in advertised set"),
+           *ModeId);
+    return;
+  }
+
+  CurrentModeId = ModeId;
+  OnAgentSettingsChanged.Broadcast();
+
+  TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
+  Params->SetStringField(TEXT("sessionId"), SessionId);
+  Params->SetStringField(TEXT("modeId"), ModeId);
+  Peer.SendRequest(TEXT("session/set_mode"), Params,
+                   [](const TSharedPtr<FJsonObject> &,
+                      const TSharedPtr<FJsonObject> &Error) {
+                     if (Error.IsValid()) {
+                       FString Msg;
+                       Error->TryGetStringField(TEXT("message"), Msg);
+                       UE_LOG(LogUAgent, Warning,
+                              TEXT("session/set_mode failed: %s"), *Msg);
                      }
                    });
 }

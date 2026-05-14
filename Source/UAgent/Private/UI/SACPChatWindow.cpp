@@ -288,85 +288,16 @@ TSharedRef<SWidget> SACPChatWindow::BuildInputRow() {
 }
 
 TSharedRef<SWidget> SACPChatWindow::BuildPermissionModeRow() {
-  // Stable backing storage for SComboBox — its OptionsSource and
-  // InitiallySelectedItem hold raw pointers to these TSharedPtr<FString>s.
-  struct FModeEntry {
-    EACPPermissionMode Mode;
-    const TCHAR *Label;
-  };
-  static const FModeEntry EntryTable[] = {
-      {EACPPermissionMode::ReadOnly, TEXT("Read Only")},
-      {EACPPermissionMode::Default, TEXT("Default")},
-      {EACPPermissionMode::FullAccess, TEXT("Full Access")},
-  };
-  static TArray<TSharedPtr<FString>> ModeStrings = []() {
-    TArray<TSharedPtr<FString>> Out;
-    for (const FModeEntry &E : EntryTable)
-      Out.Add(MakeShared<FString>(E.Label));
-    return Out;
-  }();
-
-  auto IndexForMode = [](EACPPermissionMode M) -> int32 {
-    for (int32 i = 0; i < UE_ARRAY_COUNT(EntryTable); ++i) {
-      if (EntryTable[i].Mode == M)
-        return i;
-    }
-    return UE_ARRAY_COUNT(EntryTable) - 1; // FullAccess fallback
-  };
-  auto ModeForLabel = [](const FString &Label) -> EACPPermissionMode {
-    for (const FModeEntry &E : EntryTable) {
-      if (Label.Equals(E.Label))
-        return E.Mode;
-    }
-    return EACPPermissionMode::FullAccess;
-  };
-
-  const int32 InitialIdx = IndexForMode(UAgent::PermissionModeStore::Load());
-
-  // Agent-advertised dropdowns (currently just Model) live in this container,
-  // populated lazily by RefreshAgentSettings. Empty when nothing's advertised.
+  // The bottom strip is now entirely agent-advertised — modes and models are
+  // both populated from session/new by RefreshAgentSettings. Agents that
+  // don't advertise either leave this container empty (Slate collapses the
+  // border to its 3-px padding height).
   TSharedRef<SHorizontalBox> AgentBox = SNew(SHorizontalBox);
   AgentSettingsContainer = AgentBox;
 
   return SNew(SBorder)
       .BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
-      .Padding(FMargin(6, 3))
-          [SNew(SHorizontalBox) +
-           SHorizontalBox::Slot()
-               .AutoWidth()
-               .VAlign(VAlign_Center)
-               .Padding(0, 0, 6,
-                        0)[SNew(STextBlock)
-                               .Text(LOCTEXT("PermissionModeLabel", "Mode:"))] +
-           SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-               [SNew(SComboBox<TSharedPtr<FString>>)
-                    .OptionsSource(&ModeStrings)
-                    .InitiallySelectedItem(ModeStrings[InitialIdx])
-                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
-                      return SNew(STextBlock)
-                          .Text(Item.IsValid() ? FText::FromString(*Item)
-                                               : FText::GetEmpty());
-                    })
-                    .OnSelectionChanged_Lambda(
-                        [ModeForLabel](TSharedPtr<FString> NewVal,
-                                       ESelectInfo::Type) {
-                          if (!NewVal.IsValid())
-                            return;
-                          const EACPPermissionMode New = ModeForLabel(*NewVal);
-                          if (UAgent::PermissionModeStore::Load() == New)
-                            return;
-                          UAgent::PermissionModeStore::Save(New);
-                        })[SNew(STextBlock).Text_Lambda([]() {
-                      const EACPPermissionMode M =
-                          UAgent::PermissionModeStore::Load();
-                      for (const FModeEntry &E : EntryTable) {
-                        if (E.Mode == M)
-                          return FText::FromString(E.Label);
-                      }
-                      return FText::FromString(
-                          EntryTable[UE_ARRAY_COUNT(EntryTable) - 1].Label);
-                    })]] +
-           SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[AgentBox]];
+      .Padding(FMargin(6, 3))[AgentBox];
 }
 
 void SACPChatWindow::RefreshAgentSettings() {
@@ -374,12 +305,75 @@ void SACPChatWindow::RefreshAgentSettings() {
     return;
 
   // Wholesale rebuild — agents may legitimately change advertised sets and
-  // dropdown counts at runtime via config_option_update.
+  // dropdown counts at runtime via config_option_update / current_mode_update.
   AgentSettingsContainer->ClearChildren();
 
+  // Mode dropdown — agent-broadcast via the `modes` field in session/new.
+  // Different agents advertise wildly different mode sets (Claude's
+  // default/acceptEdits/plan/bypassPermissions; Codex's read-only/default/
+  // full-access). Hidden when the agent doesn't support modes.
+  if (Client->GetAvailableModes().Num() > 0) {
+    TSharedRef<FAgentDropdownState> State = MakeShared<FAgentDropdownState>();
+    const TArray<UAgent::FSessionMode> &Modes = Client->GetAvailableModes();
+    const FString &Current = Client->GetCurrentModeId();
+    State->Labels.Reserve(Modes.Num());
+    State->Values.Reserve(Modes.Num());
+    int32 InitialIdx = 0;
+    for (int32 i = 0; i < Modes.Num(); ++i) {
+      const UAgent::FSessionMode &M = Modes[i];
+      const FString DisplayName = M.Name.IsEmpty() ? M.Id : M.Name;
+      State->Labels.Add(MakeShared<FString>(DisplayName));
+      State->Values.Add(M.Id);
+      if (M.Id == Current)
+        InitialIdx = i;
+    }
+
+    TSharedPtr<UAgent::FACPClient> ClientCopy = Client;
+    AgentSettingsContainer->AddSlot()
+        .AutoWidth()
+        .VAlign(VAlign_Center)
+        .Padding(0, 0, 4, 0)
+            [SNew(STextBlock).Text(LOCTEXT("ModeDropdownLabel", "Mode:"))];
+    AgentSettingsContainer->AddSlot().AutoWidth().VAlign(VAlign_Center)
+        [SNew(SComboBox<TSharedPtr<FString>>)
+             .OptionsSource(&State->Labels)
+             .InitiallySelectedItem(State->Labels[InitialIdx])
+             .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+               return SNew(STextBlock)
+                   .Text(Item.IsValid() ? FText::FromString(*Item)
+                                        : FText::GetEmpty());
+             })
+             .OnSelectionChanged_Lambda([ClientCopy, State](
+                                            TSharedPtr<FString> NewVal,
+                                            ESelectInfo::Type) {
+               if (!NewVal.IsValid() || !ClientCopy.IsValid())
+                 return;
+               const int32 Idx = State->Labels.IndexOfByPredicate(
+                   [&](const TSharedPtr<FString> &P) {
+                     return P.IsValid() && *P == *NewVal;
+                   });
+               if (Idx == INDEX_NONE)
+                 return;
+               const FString &Picked = State->Values[Idx];
+               UAgent::SessionModeStore::Save(Picked);
+               ClientCopy->SetSessionMode(Picked);
+             })[SNew(STextBlock).Text_Lambda([this] {
+               if (!Client.IsValid())
+                 return FText::GetEmpty();
+               const FString &Cur = Client->GetCurrentModeId();
+               for (const UAgent::FSessionMode &M :
+                    Client->GetAvailableModes()) {
+                 if (M.Id == Cur) {
+                   return FText::FromString(M.Name.IsEmpty() ? M.Id : M.Name);
+                 }
+               }
+               return FText::FromString(Cur);
+             })]];
+  }
+
   // One dropdown per advertised model config option. Other categories
-  // (mode/thought_level/...) are intentionally ignored — only the "model"
-  // selector is surfaced here.
+  // (thought_level/...) are intentionally ignored here — only the "model"
+  // selector is surfaced.
   for (const UAgent::FConfigOption &Opt : Client->GetConfigOptions()) {
     if (Opt.Category != TEXT("model"))
       continue;
@@ -961,25 +955,38 @@ void SACPChatWindow::OnClientStateChanged(UAgent::EClientState NewState) {
     return;
   }
 
-  // Once the session is established, push the user's saved model preference
-  // to the agent if it advertised a model option that offers it. Skipped
-  // silently when there's no preference, no model option, or the saved value
-  // isn't in the option's list (different agent, dropped model, etc.).
+  // Once the session is established, push the user's saved preferences to the
+  // agent. Each is skipped silently when there's no preference or the saved
+  // value isn't in the agent's advertised set (different agent, dropped
+  // option, etc.).
   if (NewState == EClientState::Ready && Client.IsValid()) {
-    const FString Saved = UAgent::ModelStore::Load();
-    if (Saved.IsEmpty())
+    // Saved session mode.
+    const FString SavedMode = UAgent::SessionModeStore::Load();
+    if (!SavedMode.IsEmpty() && SavedMode != Client->GetCurrentModeId()) {
+      const bool bAvailable = Client->GetAvailableModes().ContainsByPredicate(
+          [&SavedMode](const UAgent::FSessionMode &M) {
+            return M.Id == SavedMode;
+          });
+      if (bAvailable) {
+        Client->SetSessionMode(SavedMode);
+      }
+    }
+
+    // Saved model.
+    const FString SavedModel = UAgent::ModelStore::Load();
+    if (SavedModel.IsEmpty())
       return;
     for (const UAgent::FConfigOption &Opt : Client->GetConfigOptions()) {
       if (Opt.Category != TEXT("model"))
         continue;
-      if (Opt.CurrentValue == Saved)
+      if (Opt.CurrentValue == SavedModel)
         return;
       const bool bAvailable = Opt.Options.ContainsByPredicate(
-          [&Saved](const UAgent::FConfigOptionChoice &C) {
-            return C.Value == Saved;
+          [&SavedModel](const UAgent::FConfigOptionChoice &C) {
+            return C.Value == SavedModel;
           });
       if (bAvailable) {
-        Client->SetConfigOption(Opt.Id, Saved);
+        Client->SetConfigOption(Opt.Id, SavedModel);
       }
       return;
     }
