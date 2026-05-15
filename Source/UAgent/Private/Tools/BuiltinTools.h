@@ -48,6 +48,7 @@ TSharedRef<IACPTool> CreateAddInterfaceTool();
 TSharedRef<IACPTool> CreateAddWidgetTool();
 TSharedRef<IACPTool> CreateSetWidgetPropertyTool();
 TSharedRef<IACPTool> CreateSetWidgetSlotPropertyTool();
+TSharedRef<IACPTool> CreateBindComponentDelegateTool();
 
 // Asset (phases 1/3/6).
 TSharedRef<IACPTool> CreateListAssetsTool();

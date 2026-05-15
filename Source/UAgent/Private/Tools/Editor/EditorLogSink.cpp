@@ -1,5 +1,6 @@
 #include "EditorLogSink.h"
 
+#include "Editor.h"
 #include "HAL/PlatformTime.h"
 
 namespace UAgent {
@@ -30,6 +31,31 @@ void FEditorLogSink::Serialize(const TCHAR *V, ELogVerbosity::Type Verbosity,
   Line.Category = Category;
   Line.Message = V;
   Buffer.Add(MoveTemp(Line));
+}
+
+void FEditorLogSink::BindPieDelegates() {
+  if (PreBeginPieHandle.IsValid())
+    return;
+  PreBeginPieHandle =
+      FEditorDelegates::PreBeginPIE.AddLambda([this](const bool /*bIsSim*/) {
+        FScopeLock Lock(&Mutex);
+        // Stamp the id of the last line that landed *before* PIE began —
+        // GetLines uses `Id > SinceId`, so this becomes the exclusive lower
+        // bound for "lines since PIE started".
+        LastPieStartId = NextId - 1;
+      });
+}
+
+void FEditorLogSink::UnbindPieDelegates() {
+  if (PreBeginPieHandle.IsValid()) {
+    FEditorDelegates::PreBeginPIE.Remove(PreBeginPieHandle);
+    PreBeginPieHandle.Reset();
+  }
+}
+
+int64 FEditorLogSink::GetLastPieStartId() const {
+  FScopeLock Lock(&Mutex);
+  return LastPieStartId;
 }
 
 void FEditorLogSink::GetLines(int64 SinceId, int32 Limit,

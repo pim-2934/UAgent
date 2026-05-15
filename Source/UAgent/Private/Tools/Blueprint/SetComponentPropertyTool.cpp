@@ -63,14 +63,17 @@ public:
   virtual FString GetDescription() const override {
     return TEXT(
         "Set a property on a component. Two modes: on a Blueprint "
-        "(blueprintPath + componentName → writes the SCS component template "
-        "or, if the name names an inherited C++ default subobject, the "
-        "GeneratedClass CDO; recompiles, and by default updates already-placed "
-        "actors that were inheriting the prior value) or on a placed actor "
-        "(actor + componentName → writes the live component instance on that "
-        "actor, bypassing the Blueprint). Use the live-instance mode to tweak "
-        "one actor without affecting siblings spawned from the same Blueprint. "
-        "Value is the FProperty ImportText form.");
+        "(blueprintPath + componentName → writes the SCS component template, "
+        "or the GeneratedClass CDO for inherited C++ default subobjects, or — "
+        "when the component lives on an ancestor BP's SCS — gets-or-creates "
+        "an InheritableComponentHandler override on this BP and writes that, "
+        "scoping the change to this BP and its descendants; recompiles and by "
+        "default updates already-placed actors that were inheriting the prior "
+        "value) or on a placed actor (actor + componentName → writes the live "
+        "component instance on that actor, bypassing the Blueprint). Use the "
+        "live-instance mode to tweak one actor without affecting siblings "
+        "spawned from the same Blueprint. Value is the FProperty ImportText "
+        "form.");
   }
 
   virtual TSharedPtr<FJsonObject> GetInputSchema() const override {
@@ -160,12 +163,27 @@ public:
     if (!Resolved.Component) {
       return FToolResponse::Fail(
           -32000,
-          FString::Printf(TEXT("component '%s' not found on BP "
-                               "(checked SCS and inherited subobjects)"),
+          FString::Printf(TEXT("component '%s' not found on BP (checked SCS, "
+                               "ancestor-BP SCS, and inherited C++ "
+                               "subobjects)"),
                           *CompName));
     }
 
-    UActorComponent *Template = Resolved.Component;
+    const FScopedTransaction Tx(
+        LOCTEXT("SetComponentPropTx", "Set Component Property"));
+    BP->Modify();
+
+    // InheritedSCS: promote to a child ICH override before mutation so the
+    // write is scoped to this BP and its descendants instead of leaking up
+    // into the parent BP's template (which would affect every sibling
+    // subclass).
+    FString WriteErr;
+    UActorComponent *Template =
+        BlueprintAccess::EnsureWritableComponentTemplate(BP, Resolved,
+                                                         WriteErr);
+    if (!Template) {
+      return FToolResponse::Fail(-32000, WriteErr);
+    }
 
     FProperty *Prop =
         Template->GetClass()->FindPropertyByName(FName(*PropName));
@@ -175,12 +193,9 @@ public:
                                   *PropName, *Template->GetClass()->GetName()));
     }
 
-    const FScopedTransaction Tx(
-        LOCTEXT("SetComponentPropTx", "Set Component Property"));
-    BP->Modify();
-    // SCS path dirties the node; inherited path dirties the CDO instead —
-    // both are the natural owner the engine expects to see Modify()'d so the
-    // change participates in the BP's transactional save chain.
+    // SCS path dirties the node; C++ DSO path dirties the CDO; InheritedSCS
+    // path's owner is the BPGC's ICH (reached transitively through BP/Modify
+    // already called above). All flow into the BP's transactional save chain.
     if (Resolved.Source == BlueprintAccess::EBlueprintComponentSource::SCS &&
         Resolved.Node) {
       Resolved.Node->Modify();

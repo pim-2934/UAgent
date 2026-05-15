@@ -10,6 +10,7 @@ class UEdGraphPin;
 class USCS_Node;
 class UWidget;
 class UWidgetBlueprint;
+class UInheritableComponentHandler;
 
 namespace UAgent::BlueprintAccess {
 /**
@@ -36,37 +37,67 @@ UEdGraphPin *FindPinByName(UEdGraphNode *Node, const FString &PinName);
 enum class EBlueprintComponentSource : uint8 {
   /** Authored on the Blueprint itself via the SimpleConstructionScript. */
   SCS,
-  /** Inherited from a C++ (or Blueprint) parent class; lives on the
-   * GeneratedClass CDO as a default subobject. */
+  /** Inherited from a C++ parent class; lives on the GeneratedClass CDO as a
+   * default subobject created via CreateDefaultSubobject. */
   Inherited,
+  /** Authored on an ancestor *Blueprint*'s SimpleConstructionScript. Parent-BP
+   * SCS components are class metadata (the SCS node tree on the parent BPGC),
+   * not CDO subobjects, so the C++ DSO walk doesn't find them. Component
+   * points at the effective template — the child's InheritableComponentHandler
+   * override if it exists, else the parent's SCS template. */
+  InheritedSCS,
 };
 
 /** Result of ResolveBlueprintComponent. Component is null on miss. */
 struct FResolvedBlueprintComponent {
-  /** The component template (SCS) or CDO subobject (Inherited). Null on miss.
-   */
+  /** The effective component template. For SCS, the BP's own template; for
+   * Inherited, the CDO subobject; for InheritedSCS, the child's ICH override
+   * if present, otherwise the parent BP's SCS template. Null on miss. */
   UActorComponent *Component = nullptr;
-  /** SCS source only — the owning USCS_Node, used for Modify() on writes.
-   * Null when Source == Inherited. */
+  /** SCS source only — the owning USCS_Node on *this* BP, used for Modify()
+   * on writes. Null for other sources. */
   USCS_Node *Node = nullptr;
   /** Inherited source only — the GeneratedClass CDO that owns Component, used
-   * for Modify() on writes. Null when Source == SCS. */
+   * for Modify() on writes. Null for other sources. */
   UObject *CDO = nullptr;
+  /** InheritedSCS source only — the SCS node on the ancestor BP that declares
+   * this component. Used to build the FComponentKey for ICH override
+   * creation. Null for other sources. */
+  USCS_Node *ParentSCSNode = nullptr;
   EBlueprintComponentSource Source = EBlueprintComponentSource::SCS;
 };
 
 /**
- * Resolve a component on a Blueprint by name. Tries the SCS first; if the
- * name doesn't match an SCS node, walks the GeneratedClass CDO for inherited
- * C++ default subobjects and matches by GetName() or the _GEN_VARIABLE FName
- * suffix that CDO subobjects carry. Returns Component=null on miss.
+ * Resolve a component on a Blueprint by name. In order:
+ *   1. This BP's own SCS (Source=SCS).
+ *   2. Each ancestor BP's SCS, walked via GetSuperClass(); when matched, the
+ *      child's InheritableComponentHandler override template is preferred over
+ *      the parent's template if one exists (Source=InheritedSCS).
+ *   3. The GeneratedClass CDO's components, for inherited C++ default
+ *      subobjects (Source=Inherited).
+ * Returns Component=null on miss.
  *
- * Inherited components are archetypes (RF_ArchetypeObject), so callers can
- * apply the same FProperty mutation + GetArchetypeInstances() propagation
- * loop used for SCS templates.
+ * All three sources yield archetype objects (RF_ArchetypeObject), so callers
+ * can apply the same FProperty mutation + GetArchetypeInstances() propagation
+ * loop used for SCS templates. Mutating an InheritedSCS result without first
+ * creating an ICH override would write the parent BP's template (affecting
+ * every descendant). Use EnsureWritableComponentTemplate before mutation.
  */
 FResolvedBlueprintComponent
 ResolveBlueprintComponent(UBlueprint *BP, const FString &ComponentName);
+
+/**
+ * Ensure Resolved.Component is a template owned by InBP that can be safely
+ * mutated without affecting siblings:
+ *   - SCS / Inherited (C++ DSO): no-op, returns the existing template.
+ *   - InheritedSCS: gets-or-creates an InheritableComponentHandler override on
+ *     this BP keyed off Resolved.ParentSCSNode, rewrites Resolved.Component to
+ *     point at the override, and returns it.
+ * Returns nullptr with OutError set on failure. Caller is responsible for
+ * Modify() / PostEditChange / Compile / Save around the subsequent mutation.
+ */
+UActorComponent *EnsureWritableComponentTemplate(
+    UBlueprint *InBP, FResolvedBlueprintComponent &Resolved, FString &OutError);
 
 /**
  * Load a UWidgetBlueprint by asset path. Accepts the same path shapes as
