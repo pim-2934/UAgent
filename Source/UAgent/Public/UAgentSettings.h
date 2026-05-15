@@ -105,4 +105,17 @@ public:
             meta = (DisplayName = "Developer Mode",
                     ToolTip = "Requires editor restart to take effect."))
   bool bDeveloperMode = false;
+
+  /**
+   * When true, every ACP JSON-RPC line crossing the transport (both
+   * outbound `>>` and inbound `<<`) is logged to the Output Log under
+   * LogUAgent at Log level. Used to debug protocol-level issues such as
+   * mode advertisements / mode switches not landing as expected. Takes
+   * effect immediately — no restart needed.
+   */
+  UPROPERTY(Config, EditAnywhere, Category = "Developer",
+            meta = (DisplayName = "Log Agent JSON",
+                    ToolTip = "Logs raw ACP JSON-RPC messages (both "
+                              "directions) to the Output Log."))
+  bool bLogAgentJson = false;
 };
