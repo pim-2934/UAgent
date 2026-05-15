@@ -1,7 +1,9 @@
 #include "BlueprintQueries.h"
 #include "../Common/AssetPathUtils.h"
 
+#include "Blueprint/WidgetTree.h"
 #include "Components/ActorComponent.h"
+#include "Components/Widget.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
@@ -9,6 +11,7 @@
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
+#include "WidgetBlueprint.h"
 
 namespace UAgent::BlueprintAccess {
 UBlueprint *LoadBlueprintByPath(const FString &InPath, FString &OutError) {
@@ -102,5 +105,30 @@ ResolveBlueprintComponent(UBlueprint *BP, const FString &ComponentName) {
     }
   }
   return Out;
+}
+
+UWidgetBlueprint *LoadWidgetBlueprintByPath(const FString &InPath,
+                                            FString &OutError) {
+  UObject *Loaded = Common::LoadAssetByPath(
+      InPath, UWidgetBlueprint::StaticClass(), OutError);
+  UWidgetBlueprint *WBP = Cast<UWidgetBlueprint>(Loaded);
+  if (!WBP && OutError.IsEmpty()) {
+    OutError = FString::Printf(TEXT("asset at '%s' is not a Widget Blueprint"),
+                               *InPath);
+  }
+  return WBP;
+}
+
+UWidget *FindWidgetInTree(UWidgetBlueprint *WBP, const FString &WidgetName) {
+  if (!WBP || !WBP->WidgetTree || WidgetName.IsEmpty())
+    return nullptr;
+  UWidget *Match = nullptr;
+  WBP->WidgetTree->ForEachWidget([&](UWidget *W) {
+    if (Match || !W)
+      return;
+    if (W->GetName().Equals(WidgetName, ESearchCase::IgnoreCase))
+      Match = W;
+  });
+  return Match;
 }
 } // namespace UAgent::BlueprintAccess

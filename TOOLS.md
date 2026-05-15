@@ -32,6 +32,9 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 - **set_component_material** — Assign a material to a mesh component's material slot, either on a Blueprint SCS template or a placed actor's live instance. Wraps `UMeshComponent::SetMaterial`.
 - **get_component_properties** — Read properties from a Blueprint's SCS component template or a placed actor's live component.
 - **add_interface** — Add an interface implementation to a Blueprint (C++ or Blueprint interface).
+- **add_widget** — Add a UWidget into a Widget Blueprint's WidgetTree. Without a parent the widget becomes the RootWidget; with a parent it's attached as a child of a named UPanelWidget and a default UPanelSlot is auto-created.
+- **set_widget_property** — Set a property on a UWidget inside a Widget Blueprint's WidgetTree (e.g. Border `Background`, Image `ColorAndOpacity`, TextBlock `Text`).
+- **set_widget_slot_property** — Set a property on the UPanelSlot of a child widget (anchors, offsets, padding, alignment, fill — slot class depends on the parent panel).
 
 ## Assets
 

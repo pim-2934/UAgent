@@ -8,6 +8,8 @@ class UEdGraph;
 class UEdGraphNode;
 class UEdGraphPin;
 class USCS_Node;
+class UWidget;
+class UWidgetBlueprint;
 
 namespace UAgent::BlueprintAccess {
 /**
@@ -65,4 +67,19 @@ struct FResolvedBlueprintComponent {
  */
 FResolvedBlueprintComponent
 ResolveBlueprintComponent(UBlueprint *BP, const FString &ComponentName);
+
+/**
+ * Load a UWidgetBlueprint by asset path. Accepts the same path shapes as
+ * LoadBlueprintByPath. Returns nullptr with OutError set on miss or when the
+ * asset isn't a Widget Blueprint.
+ */
+UWidgetBlueprint *LoadWidgetBlueprintByPath(const FString &InPath,
+                                            FString &OutError);
+
+/**
+ * Find a widget inside a Widget Blueprint's WidgetTree by name
+ * (case-insensitive GetName() match). Returns nullptr if the BP has no
+ * WidgetTree or no widget with that name exists.
+ */
+UWidget *FindWidgetInTree(UWidgetBlueprint *WBP, const FString &WidgetName);
 } // namespace UAgent::BlueprintAccess

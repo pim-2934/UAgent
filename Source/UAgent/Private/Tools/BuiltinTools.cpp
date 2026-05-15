@@ -29,6 +29,9 @@ void RegisterBuiltinTools(FACPToolRegistry &Registry) {
   Registry.Register(CreateSetComponentMaterialTool());
   Registry.Register(CreateGetComponentPropertiesTool());
   Registry.Register(CreateAddInterfaceTool());
+  Registry.Register(CreateAddWidgetTool());
+  Registry.Register(CreateSetWidgetPropertyTool());
+  Registry.Register(CreateSetWidgetSlotPropertyTool());
 
   // Asset discovery + editing.
   Registry.Register(CreateListAssetsTool());
