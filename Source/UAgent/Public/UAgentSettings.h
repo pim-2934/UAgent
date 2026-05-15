@@ -113,9 +113,13 @@ public:
    * mode advertisements / mode switches not landing as expected. Takes
    * effect immediately — no restart needed.
    */
+  // clang-format off
+  // UHT does not support adjacent-string-literal concatenation in meta=();
+  // keep the ToolTip on one line.
   UPROPERTY(Config, EditAnywhere, Category = "Developer",
             meta = (DisplayName = "Log Agent JSON",
-                    ToolTip = "Logs raw ACP JSON-RPC messages (both "
-                              "directions) to the Output Log."))
+                    ToolTip = "Logs raw ACP JSON-RPC messages (both directions) to the Output Log."))
+  
   bool bLogAgentJson = false;
+  // clang-format on
 };
