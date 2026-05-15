@@ -47,35 +47,17 @@ You need an ACP-compatible agent backend. The plugin is currently tested with th
 
 #### Claude CLI (recommended)
 
-Install the Claude CLI:
+Install both components per their official instructions:
 
-```
-npm install -g @anthropic-ai/claude-code
-```
-
-Authenticate once — run `claude login` and follow the prompt, or set `ANTHROPIC_API_KEY` in your environment.
-
-Install the ACP adapter that bridges the CLI to this plugin:
-
-```
-npm install -g @agentclientprotocol/claude-agent-acp
-```
+- **Claude Code CLI** — [setup docs](https://code.claude.com/docs/en/setup)
+- **claude-agent-acp** (ACP adapter that bridges the CLI to this plugin) — [repository](https://github.com/agentclientprotocol/claude-agent-acp)
 
 #### Codex CLI
 
-Install the Codex CLI:
+Install both components per their official instructions:
 
-```
-npm install -g @openai/codex
-```
-
-Authenticate once — run `codex login` and follow the prompt, or set `OPENAI_API_KEY` (or `CODEX_API_KEY`) in your environment.
-
-Install the ACP adapter that bridges the CLI to this plugin:
-
-```
-npm install -g @zed-industries/codex-acp
-```
+- **OpenAI Codex CLI** — [installation guide](https://developers.openai.com/codex/cli)
+- **codex-acp** (ACP adapter that bridges the CLI to this plugin) — [repository](https://github.com/zed-industries/codex-acp)
 
 ### Plugin settings
 
