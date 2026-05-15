@@ -1347,6 +1347,48 @@ void SACPChatWindow::OnClientError(const FString &Message) {
 
 // ─── Permission prompt routing ──────────────────────────────────────────────
 
+namespace {
+// Render the agent's pending args as `key: value` lines, with multi-line
+// strings indented under their key. The card title already shows the tool
+// (e.g. "Edit Foo.cpp") in bold — this just makes the arguments readable
+// instead of dumping the whole ACP toolCall wrapper as JSON.
+FString BuildPermissionPreview(const TSharedPtr<FJsonObject> &ToolCall) {
+  const TSharedPtr<FJsonObject> *RawPtr = nullptr;
+  if (!ToolCall.IsValid() ||
+      !ToolCall->TryGetObjectField(TEXT("rawInput"), RawPtr) || !RawPtr)
+    return FString();
+
+  FString Out;
+  for (const auto &Pair : (*RawPtr)->Values) {
+    FString Value;
+    if (!Pair.Value.IsValid() || !Pair.Value->TryGetString(Value)) {
+      // Object/array/null — serialize as compact JSON via a 1-element array
+      // wrapper, because FJsonSerializer::Serialize has no overload for a
+      // bare FJsonValue. Strip the outer brackets afterwards.
+      const TArray<TSharedPtr<FJsonValue>> Wrap = {Pair.Value};
+      TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
+          TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(
+              &Value);
+      FJsonSerializer::Serialize(Wrap, W);
+      if (Value.StartsWith(TEXT("[")) && Value.EndsWith(TEXT("]")))
+        Value = Value.Mid(1, Value.Len() - 2);
+    }
+    // Blank line between the bold key and the value matters: without it the
+    // renderer treats both as one paragraph, and any markdown in the value
+    // (headings, lists, fenced code) renders as literal text.
+    if (Value.Contains(TEXT("\n"))) {
+      Out += FString::Printf(TEXT("**%s:**\n\n%s\n\n"), *Pair.Key, *Value);
+    } else {
+      Out += FString::Printf(TEXT("**%s:** %s\n\n"), *Pair.Key, *Value);
+    }
+  }
+  constexpr int32 MaxChars = 1500;
+  if (Out.Len() > MaxChars)
+    Out = Out.Left(MaxChars) + TEXT("\n…(truncated)");
+  return Out.TrimEnd();
+}
+} // namespace
+
 void SACPChatWindow::OnPermissionRequested(
     const UAgent::FPermissionRequest &Req,
     TFunction<void(UAgent::EPermissionOutcome)> Complete) {
@@ -1356,19 +1398,7 @@ void SACPChatWindow::OnPermissionRequested(
     return;
   }
 
-  // Render the agent's raw arguments as an indented JSON snippet so the user
-  // sees exactly what's about to be invoked. Truncate hard so a 50KB blob
-  // doesn't blow up the chat row.
-  FString ArgsPreview;
-  if (Req.RawToolCall.IsValid()) {
-    TSharedRef<TJsonWriter<>> Writer =
-        TJsonWriterFactory<>::Create(&ArgsPreview);
-    FJsonSerializer::Serialize(Req.RawToolCall.ToSharedRef(), Writer);
-    constexpr int32 MaxChars = 1500;
-    if (ArgsPreview.Len() > MaxChars) {
-      ArgsPreview = ArgsPreview.Left(MaxChars) + TEXT("\n…(truncated)");
-    }
-  }
+  const FString ArgsPreview = BuildPermissionPreview(Req.RawToolCall);
 
   const FString Title =
       Req.ToolTitle.IsEmpty() ? TEXT("(unnamed tool)") : Req.ToolTitle;

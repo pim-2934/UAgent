@@ -266,15 +266,14 @@ SACPMessageList::MakePermissionRow(const FACPChatMessageItemRef &Item) {
                       })
                       .Font(FAppStyle::Get().GetFontStyle(TEXT("BoldFont")))];
 
-  Body->AddSlot().AutoHeight().Padding(
-      0, 0, 0, 4)[SNew(STextBlock)
-                      .Text_Lambda([Item]() {
-                        if (Item->PermissionArgsPreview.IsEmpty())
-                          return FText::GetEmpty();
-                        return FText::FromString(Item->PermissionArgsPreview);
-                      })
-                      .ColorAndOpacity(FLinearColor(0.65f, 0.65f, 0.65f, 1.0f))
-                      .AutoWrapText(true)];
+  // PermissionArgsPreview is markdown built once in SACPChatWindow when the
+  // card is appended; render through ChatMarkdown so **bold** keys and fenced
+  // code blocks display formatted instead of as literal characters.
+  if (!Item->PermissionArgsPreview.IsEmpty()) {
+    Body->AddSlot().AutoHeight().Padding(
+        0, 0, 0,
+        4)[UAgent::ChatMarkdown::BuildWidget(Item->PermissionArgsPreview)];
+  }
 
   // Buttons row, hidden once the user resolves the prompt.
   TSharedRef<SHorizontalBox> Buttons = SNew(SHorizontalBox);
