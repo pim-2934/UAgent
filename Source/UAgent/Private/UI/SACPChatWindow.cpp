@@ -320,32 +320,67 @@ TSharedRef<SWidget> SACPChatWindow::BuildInputRow() {
                                              .AllowMultiLine(true)
                                              .AutoWrapText(true)
                                              .AlwaysShowScrollbars(false)]]]] +
-           SHorizontalBox::Slot().AutoWidth().VAlign(
-               VAlign_Bottom)[SNew(SButton)
-                                  .Text_Lambda([this]() -> FText {
-                                    return (Client.IsValid() &&
+           SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom)
+               [SNew(SVerticalBox) +
+                SVerticalBox::Slot()
+                    .AutoHeight()[SNew(SButton)
+                                      .Text_Lambda([this]() -> FText {
+                                        return (Client.IsValid() &&
+                                                Client->GetState() ==
+                                                    EClientState::Prompting)
+                                                   ? LOCTEXT("Cancel", "Cancel")
+                                                   : LOCTEXT("Send", "Send");
+                                      })
+                                      .IsEnabled_Lambda([this]() {
+                                        if (!Client.IsValid())
+                                          return false;
+                                        if (Client->GetState() ==
+                                            EClientState::Prompting)
+                                          return true;
+                                        return IsSendEnabled();
+                                      })
+                                      .OnClicked_Lambda([this]() -> FReply {
+                                        if (Client.IsValid() &&
                                             Client->GetState() ==
-                                                EClientState::Prompting)
-                                               ? LOCTEXT("Cancel", "Cancel")
-                                               : LOCTEXT("Send", "Send");
-                                  })
-                                  .IsEnabled_Lambda([this]() {
-                                    if (!Client.IsValid())
-                                      return false;
-                                    if (Client->GetState() ==
-                                        EClientState::Prompting)
-                                      return true;
-                                    return IsSendEnabled();
-                                  })
-                                  .OnClicked_Lambda([this]() -> FReply {
-                                    if (Client.IsValid() &&
-                                        Client->GetState() ==
-                                            EClientState::Prompting) {
-                                      Client->CancelPrompt();
-                                      return FReply::Handled();
-                                    }
-                                    return OnSendClicked();
-                                  })]];
+                                                EClientState::Prompting) {
+                                          Client->CancelPrompt();
+                                          return FReply::Handled();
+                                        }
+                                        return OnSendClicked();
+                                      })] +
+                SVerticalBox::Slot()
+                    .AutoHeight()
+                    .HAlign(HAlign_Right)
+                    .Padding(0, 2, 0,
+                             0)[SNew(STextBlock)
+                                    .Visibility_Lambda([this]() {
+                                      return (UsageUsed >= 0 && UsageSize > 0)
+                                                 ? EVisibility::Visible
+                                                 : EVisibility::Collapsed;
+                                    })
+                                    .ColorAndOpacity(
+                                        FLinearColor(0.6f, 0.6f, 0.6f, 1.0f))
+                                    .Text_Lambda([this]() -> FText {
+                                      if (UsageUsed < 0 || UsageSize <= 0)
+                                        return FText::GetEmpty();
+                                      const int32 Pct = FMath::RoundToInt(
+                                          100.0 *
+                                          static_cast<double>(UsageUsed) /
+                                          static_cast<double>(UsageSize));
+                                      if (!bUsageHasCost) {
+                                        return FText::FromString(
+                                            FString::Printf(TEXT("%d%%"), Pct));
+                                      }
+                                      const FString Currency =
+                                          UsageCostCurrency.IsEmpty()
+                                              ? FString()
+                                              : FString::Printf(
+                                                    TEXT(" %s"),
+                                                    *UsageCostCurrency);
+                                      return FText::FromString(FString::Printf(
+                                          TEXT("%d%% (%.2f%s)"), Pct,
+                                          UsageCostAmount, *Currency));
+                                    })]]];
 }
 
 TSharedRef<SWidget> SACPChatWindow::BuildPermissionModeRow() {
@@ -573,6 +608,14 @@ void SACPChatWindow::StartSession() {
   // New session — re-send AGENTS.md on the first prompt so edits between
   // sessions are picked up.
   bProjectContextSent = false;
+
+  // Drop the previous session's usage counters so the label doesn't show
+  // stale numbers while the new session is starting up.
+  UsageUsed = -1;
+  UsageSize = -1;
+  bUsageHasCost = false;
+  UsageCostAmount = 0.0;
+  UsageCostCurrency.Reset();
 
   if (MessageLog.IsValid())
     MessageLog->Reset();
@@ -805,6 +848,14 @@ void SACPChatWindow::OnHistoryEntryPicked(const FString &SessionIdToLoad) {
   if (PlanStrip.IsValid())
     PlanStrip->Reset();
   bProjectContextSent = true; // loaded session already has AGENTS.md context
+
+  // Stale usage counters would mislead until the replayed session emits a
+  // fresh usage_update — clear them now.
+  UsageUsed = -1;
+  UsageSize = -1;
+  bUsageHasCost = false;
+  UsageCostAmount = 0.0;
+  UsageCostCurrency.Reset();
 
   Client->LoadSession(SessionIdToLoad);
 }
@@ -1324,6 +1375,19 @@ void SACPChatWindow::OnSessionUpdateReceived(
   if (Update.Kind == UAgent::FSessionUpdate::EKind::Plan &&
       PlanStrip.IsValid()) {
     PlanStrip->SetPlan(Update.PlanEntries);
+  }
+  // Usage snapshots drive the small label under the Send button. The agent
+  // may emit several `usage_update`s per turn — cost typically arrives in a
+  // later one. Keep the latest cost across cost-less updates so the figure
+  // doesn't flicker out.
+  if (Update.Kind == UAgent::FSessionUpdate::EKind::UsageUpdate) {
+    UsageUsed = Update.UsageUsed;
+    UsageSize = Update.UsageSize;
+    if (Update.bHasCost) {
+      bUsageHasCost = true;
+      UsageCostAmount = Update.CostAmount;
+      UsageCostCurrency = Update.CostCurrency;
+    }
   }
 }
 

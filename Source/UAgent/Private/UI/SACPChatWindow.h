@@ -183,6 +183,17 @@ private:
   // re-loads (catches edits to AGENTS.md between sessions).
   bool bProjectContextSent = false;
 
+  // Latest token-budget / cost snapshot from the agent's `usage_update`
+  // session/update notifications. Rendered as a small label beneath the
+  // Send button when populated. Reset per session in StartSession (and on
+  // LoadSession via the message-log reset path) so a new session doesn't
+  // inherit the previous session's counters.
+  int64 UsageUsed = -1;
+  int64 UsageSize = -1;
+  bool bUsageHasCost = false;
+  double UsageCostAmount = 0.0;
+  FString UsageCostCurrency;
+
   TMap<FName, FAssetData> ContextChips;
   // Subset of ContextChips keys that were added by an @[AssetName] token. These
   // get auto-removed from ContextChips when the token disappears from the

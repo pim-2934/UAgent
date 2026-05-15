@@ -438,6 +438,26 @@ bool FSessionUpdate::FromJson(const TSharedRef<FJsonObject> &Params,
     }
     return true;
   }
+  if (Kind == TEXT("usage_update")) {
+    Out.Kind = EKind::UsageUpdate;
+    double UsedD = 0.0;
+    if ((*UpdateObj)->TryGetNumberField(TEXT("used"), UsedD)) {
+      Out.UsageUsed = static_cast<int64>(UsedD);
+    }
+    double SizeD = 0.0;
+    if ((*UpdateObj)->TryGetNumberField(TEXT("size"), SizeD)) {
+      Out.UsageSize = static_cast<int64>(SizeD);
+    }
+    const TSharedPtr<FJsonObject> *CostObj = nullptr;
+    if ((*UpdateObj)->TryGetObjectField(TEXT("cost"), CostObj) && CostObj &&
+        CostObj->IsValid()) {
+      if ((*CostObj)->TryGetNumberField(TEXT("amount"), Out.CostAmount)) {
+        Out.bHasCost = true;
+      }
+      (*CostObj)->TryGetStringField(TEXT("currency"), Out.CostCurrency);
+    }
+    return true;
+  }
 
   Out.Kind = EKind::Raw;
   return true;

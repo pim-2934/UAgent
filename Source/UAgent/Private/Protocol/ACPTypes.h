@@ -205,6 +205,7 @@ struct FSessionUpdate {
     AvailableCommandsUpdate,
     CurrentModeUpdate,
     ConfigOptionUpdate,
+    UsageUpdate,
     Raw,
   };
 
@@ -234,6 +235,15 @@ struct FSessionUpdate {
   // Plan: full replacement plan — per spec, clients replace rather than
   // patch. Empty array is a valid "clear the plan" signal.
   TArray<FPlanEntry> PlanEntries;
+
+  // UsageUpdate: token-budget / cost snapshot. Cost is optional — the agent
+  // may emit several `usage_update` notifications for the same turn, only
+  // some of which carry a `cost` object.
+  int64 UsageUsed = -1;
+  int64 UsageSize = -1;
+  bool bHasCost = false;
+  double CostAmount = 0.0;
+  FString CostCurrency;
 
   // Fallback — raw object for kinds we don't model yet.
   TSharedPtr<FJsonObject> RawObject;
