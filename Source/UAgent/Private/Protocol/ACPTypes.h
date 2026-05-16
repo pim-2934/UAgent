@@ -57,6 +57,25 @@ struct FConfigOptionChoice {
 };
 
 /**
+ * One ACP session mode advertised by the agent — Claude's "default" /
+ * "acceptEdits" / "plan" / "bypassPermissions", Codex's "read-only" /
+ * "default" / "full-access", etc. Switched via session/set_mode and refreshed
+ * by current_mode_update notifications.
+ */
+struct FSessionMode {
+  FString Id;
+  FString Name;
+  FString Description;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj, FSessionMode &Out);
+};
+
+/** Parses a JSON array of SessionMode objects. Resets Out before populating;
+ * malformed entries are skipped. */
+void ParseSessionModes(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionMode> &Out);
+
+/**
  * One ACP "session config option" — a typed selector advertised by the agent.
  * Category is conventional and signals UX intent: "model", "mode",
  * "thought_level" (reasoning effort), or empty/custom.
@@ -74,6 +93,92 @@ struct FConfigOption {
  * malformed entries are skipped. */
 void ParseConfigOptions(const TArray<TSharedPtr<FJsonValue>> &In,
                         TArray<FConfigOption> &Out);
+
+/**
+ * One ACP slash command advertised by the agent (Claude's /init, /clear, /help,
+ * agent-specific shortcuts, …). Sent in `session/new`'s result and refreshed
+ * by `available_commands_update` notifications. Per the spec, the user
+ * invokes one by sending a regular `session/prompt` whose text begins with
+ * `/<name>` — there is no dedicated RPC.
+ */
+struct FAvailableCommand {
+  FString Name;
+  FString Description;
+  /** Optional free-form hint shown to the user when the command takes input
+   * (e.g. "test pattern", "branch name"). Populated from `input.hint`; empty
+   * when the command takes no arguments or the agent omitted the hint. */
+  FString InputHint;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj,
+                       FAvailableCommand &Out);
+};
+
+/** Parses a JSON array of AvailableCommand objects. Resets Out before
+ * populating; malformed entries are skipped. */
+void ParseAvailableCommands(const TArray<TSharedPtr<FJsonValue>> &In,
+                            TArray<FAvailableCommand> &Out);
+
+/**
+ * One entry in a `session/list` result — describes a past session the agent
+ * remembers and can replay via `session/load`. `Title` and `UpdatedAt` are
+ * optional in the spec; clients are expected to fall back gracefully (display
+ * a truncated sessionId, omit the timestamp, etc.).
+ */
+struct FSessionInfo {
+  FString SessionId;
+  FString Cwd;
+  FString Title;
+  /** ISO-8601 string as advertised by the agent; not parsed — surfaced as-is
+   * so the UI can display it without losing precision. */
+  FString UpdatedAt;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj, FSessionInfo &Out);
+};
+
+/** Parses a JSON array of SessionInfo objects. Resets Out before populating;
+ * malformed entries (missing sessionId) are skipped. */
+void ParseSessionInfos(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionInfo> &Out);
+
+/** Status of one plan entry — drives the leading glyph in the UI. Unknown
+ * is the fallback for unrecognized strings so a future ACP value doesn't
+ * crash older clients. */
+enum class EPlanEntryStatus : uint8 {
+  Pending,
+  InProgress,
+  Completed,
+  Unknown,
+};
+
+/** Priority hint the agent attaches to each plan entry. Drives a subtle row
+ * tint in the strip; same Unknown fallback as Status. */
+enum class EPlanEntryPriority : uint8 {
+  Low,
+  Medium,
+  High,
+  Unknown,
+};
+
+EPlanEntryStatus ParsePlanEntryStatus(const FString &In);
+EPlanEntryPriority ParsePlanEntryPriority(const FString &In);
+
+/**
+ * One row in an agent's plan. Per the ACP spec the agent re-emits the full
+ * list on every update — clients replace, not patch. We mirror that here:
+ * no stable id on each entry, ordering and content carry meaning.
+ */
+struct FPlanEntry {
+  FString Content;
+  EPlanEntryStatus Status = EPlanEntryStatus::Unknown;
+  EPlanEntryPriority Priority = EPlanEntryPriority::Unknown;
+
+  static bool FromJson(const TSharedRef<FJsonObject> &Obj, FPlanEntry &Out);
+};
+
+/** Parses a JSON array of PlanEntry objects. Resets Out before populating;
+ * malformed entries (missing content) are skipped. */
+void ParsePlanEntries(const TArray<TSharedPtr<FJsonValue>> &In,
+                      TArray<FPlanEntry> &Out);
 
 /** Stop reasons returned by session/prompt. */
 enum class EStopReason : uint8 {
@@ -100,6 +205,7 @@ struct FSessionUpdate {
     AvailableCommandsUpdate,
     CurrentModeUpdate,
     ConfigOptionUpdate,
+    UsageUpdate,
     Raw,
   };
 
@@ -119,6 +225,25 @@ struct FSessionUpdate {
   // ConfigOptionUpdate: full advertised set, with currentValue reflecting the
   // agent's post-change state.
   TArray<FConfigOption> ConfigOptions;
+
+  // CurrentModeUpdate: id of the mode the agent has switched into.
+  FString CurrentModeId;
+
+  // AvailableCommandsUpdate: full advertised set of slash commands.
+  TArray<FAvailableCommand> AvailableCommands;
+
+  // Plan: full replacement plan — per spec, clients replace rather than
+  // patch. Empty array is a valid "clear the plan" signal.
+  TArray<FPlanEntry> PlanEntries;
+
+  // UsageUpdate: token-budget / cost snapshot. Cost is optional — the agent
+  // may emit several `usage_update` notifications for the same turn, only
+  // some of which carry a `cost` object.
+  int64 UsageUsed = -1;
+  int64 UsageSize = -1;
+  bool bHasCost = false;
+  double CostAmount = 0.0;
+  FString CostCurrency;
 
   // Fallback — raw object for kinds we don't model yet.
   TSharedPtr<FJsonObject> RawObject;

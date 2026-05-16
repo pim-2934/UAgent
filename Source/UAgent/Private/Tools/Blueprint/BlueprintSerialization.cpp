@@ -275,4 +275,78 @@ TSharedPtr<FJsonObject> BuildBlueprintDump(const FString &AssetPath,
 
   return Root;
 }
+
+TSharedPtr<FJsonObject> BuildSingleNodeDump(const FString &AssetPath,
+                                            const FString &GraphName,
+                                            const FString &NodeId,
+                                            FString &OutError) {
+  UBlueprint *BP = LoadBlueprintByPath(AssetPath, OutError);
+  if (!BP)
+    return nullptr;
+
+  FGuid Target;
+  if (!FGuid::Parse(NodeId, Target)) {
+    OutError =
+        FString::Printf(TEXT("nodeId '%s' is not a valid GUID"), *NodeId);
+    return nullptr;
+  }
+
+  auto ScanGraph = [&](UEdGraph *G) -> UEdGraphNode * {
+    if (!G)
+      return nullptr;
+    for (UEdGraphNode *N : G->Nodes) {
+      if (N && N->NodeGuid == Target)
+        return N;
+    }
+    return nullptr;
+  };
+
+  UEdGraph *FoundGraph = nullptr;
+  UEdGraphNode *FoundNode = nullptr;
+  if (!GraphName.IsEmpty()) {
+    UEdGraph *Graph = FindGraph(BP, GraphName);
+    if (!Graph) {
+      OutError = FString::Printf(TEXT("graph '%s' not found on %s"), *GraphName,
+                                 *BP->GetName());
+      return nullptr;
+    }
+    FoundNode = ScanGraph(Graph);
+    if (FoundNode)
+      FoundGraph = Graph;
+  } else {
+    // UBlueprint's graph arrays are TArray<TObjectPtr<UEdGraph>> in 5.7+, so
+    // walk each list directly rather than collecting pointers-to-arrays.
+    auto ScanList = [&](const auto &List) {
+      if (FoundNode)
+        return;
+      for (UEdGraph *G : List) {
+        if (UEdGraphNode *N = ScanGraph(G)) {
+          FoundNode = N;
+          FoundGraph = G;
+          return;
+        }
+      }
+    };
+    ScanList(BP->UbergraphPages);
+    ScanList(BP->FunctionGraphs);
+    ScanList(BP->MacroGraphs);
+    ScanList(BP->IntermediateGeneratedGraphs);
+    ScanList(BP->DelegateSignatureGraphs);
+  }
+
+  if (!FoundNode) {
+    OutError = FString::Printf(
+        TEXT("node '%s' not found%s"), *NodeId,
+        GraphName.IsEmpty()
+            ? TEXT(" in any graph")
+            : *FString::Printf(TEXT(" in graph '%s'"), *GraphName));
+    return nullptr;
+  }
+
+  TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+  Root->SetStringField(TEXT("path"), BP->GetPathName());
+  Root->SetStringField(TEXT("graphName"), FoundGraph->GetName());
+  Root->SetObjectField(TEXT("node"), NodeToJson(FoundNode));
+  return Root;
+}
 } // namespace UAgent::BlueprintAccess

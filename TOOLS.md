@@ -2,7 +2,7 @@
 
 Every tool is exposed over both ACP (as `_ue5/<name>`) and MCP (as `<name>`), backed by a single `IACPTool` implementation in the editor. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add one.
 
-Each tool classifies itself as read-only or mutating. The chat window's permission dropdown uses this classification: **Read Only** mode rejects mutating tools, **Default** mode auto-allows reads and prompts on mutations, **Full Access** allows everything. The MCP server also emits the spec's `annotations.readOnlyHint` for read-only tools so external MCP clients can classify them correctly. See [Permission classification](CONTRIBUTING.md#permission-classification) in CONTRIBUTING.md.
+Each tool classifies itself as read-only or mutating. When the agent asks for permission, read-only tools auto-allow and mutating tools surface an inline **Accept / Cancel** card in the chat. The MCP server also emits the spec's `annotations.readOnlyHint` for read-only tools so external MCP clients (Claude Desktop, Cursor, Zed) can classify them correctly. Agent-side session modes (Claude's *acceptEdits* / *bypassPermissions*, Codex's *full-access*) decide whether the agent calls `session/request_permission` at all — see [Permission classification](CONTRIBUTING.md#permission-classification) in CONTRIBUTING.md.
 
 ## Filesystem
 
@@ -11,12 +11,12 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 
 ## Session
 
-- **session/request_permission** — Answered based on the **Mode** dropdown at the bottom of the chat window. *Full Access* always allows; *Read Only* allows reads and rejects mutations; *Default* auto-allows reads and surfaces a permission card with **Accept / Cancel** for mutations.
+- **session/request_permission** — Auto-allows read-only tools (ACP `kind` of `read` / `search` / `think` / `fetch`, or MCP tools whose registry entry reports `IsReadOnly()`); mutating tools defer to the user via an inline **Accept / Cancel** permission card. The agent's own session mode (Claude's *acceptEdits* / *bypassPermissions*, Codex's *full-access*, etc.) controls whether it asks in the first place.
 
 ## Blueprints
 
-- **read_blueprint** — Dump a Blueprint as JSON: graphs, nodes, pins, and connections.
-- **create_node** — Spawn a node in a Blueprint graph; returns the new node's GUID.
+- **read_blueprint** — Dump a Blueprint as JSON: graphs, nodes, pins, and connections. Pass optional `nodeId` (with optional `graphName`) to return just one node's pins/links instead of the full dump.
+- **create_node** — Spawn a node in a Blueprint graph (function call, variable get/set, event override, multicast-delegate bind/unbind/clear, or raw `UK2Node` subclass); returns the new node's GUID.
 - **link_nodes** — Wire two pins, respecting `UEdGraphSchema_K2` type-checks.
 - **set_pin_default** — Set the default value on an input pin; schema-validated.
 - **delete_node** — Remove a node from a Blueprint graph; breaks its links and destroys it.
@@ -30,8 +30,12 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 - **set_default_value** — Set a variable default or CDO property via `FProperty::ImportText`.
 - **set_component_property** — Set a property on a component: an SCS template inside an Actor Blueprint, or a live component instance on a placed actor (e.g. `CubeMesh.StaticMesh`).
 - **set_component_material** — Assign a material to a mesh component's material slot, either on a Blueprint SCS template or a placed actor's live instance. Wraps `UMeshComponent::SetMaterial`.
-- **get_component_properties** — Read properties from a Blueprint's SCS component template or a placed actor's live component.
+- **get_component_properties** — Read properties from a Blueprint's SCS component template, a placed editor-world actor's live component, or a running PIE-world component (pass `pie:true`, optionally with `controllerIndex` for the local player pawn or `actor` for a named PIE actor).
 - **add_interface** — Add an interface implementation to a Blueprint (C++ or Blueprint interface).
+- **add_widget** — Add a UWidget into a Widget Blueprint's WidgetTree. Without a parent the widget becomes the RootWidget; with a parent it's attached as a child of a named UPanelWidget and a default UPanelSlot is auto-created.
+- **set_widget_property** — Set a property on a UWidget inside a Widget Blueprint's WidgetTree (e.g. Border `Background`, Image `ColorAndOpacity`, TextBlock `Text`).
+- **set_widget_slot_property** — Set a property on the UPanelSlot of a child widget (anchors, offsets, padding, alignment, fill — slot class depends on the parent panel).
+- **bind_component_delegate** — Bind a multicast delegate on a Blueprint's component to a new ComponentBoundEvent handler — the BP-idiomatic equivalent of right-clicking a component's delegate pin in the editor and choosing "Add Event → Bind Event to ...". Works for SCS, parent-BP, and inherited C++ default-subobject components. If a handler already exists for the (component, delegate) pair, returns its GUID instead of duplicating.
 
 ## Assets
 
@@ -68,7 +72,7 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 
 - **open_asset** — Open an asset in its default editor.
 - **focus_in_content_browser** — Highlight an asset in the Content Browser.
-- **read_editor_log** — Tail the Output Log, filterable by category and severity.
+- **read_editor_log** — Tail the Output Log, filterable by category and severity. Pass `sincePieStart:true` to clip results to log lines emitted after the most recent Play-In-Editor start.
 - **run_console_command** — Execute an editor console command and capture output.
 - **play_in_editor** — Start Play-in-Editor; optional `map`, `netMode`, `numPlayers`, `simulate`, `startLocation`, `startRotation`, `separateServer`.
 - **stop_pie** — Stop the active Play-in-Editor session.
@@ -78,7 +82,7 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 ## Level
 
 - **list_level_actors** — List actors in the edited level with class, transform, tags, and components.
-- **get_actor_properties** — Dump a placed actor's properties as JSON.
+- **get_actor_properties** — Dump an actor's properties as JSON. Default reads from the editor world; pass `pie:true` (with optional `controllerIndex` or `actor`) to read the running player pawn or a named PIE actor for live runtime inspection.
 - **set_actor_property** — Set a property on a placed actor via `FProperty::ImportText`.
 - **spawn_actor** — Place an actor in the edited level from a Blueprint or class; returns its name, label, and path.
 - **destroy_actor** — Destroy one or more placed actors in the edited level; accepts `actor` or `actors[]` and reports failures per actor.
@@ -89,3 +93,9 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 
 - **read_config** — Read a config entry via `GConfig`.
 - **write_config** — Write a config entry via `GConfig` (project-dir files only).
+
+## Developer (gated)
+
+Only registered when **both** `UUAgentSettings::bDeveloperMode` is true *and* the plugin's `Source/UAgent/Private/Tools/` directory is writable. Off by default. Toggling the setting requires an editor restart to take effect — tool registration runs once in `StartupModule`.
+
+- **propose_missing_tool** — Surface a clearly-missing UE5 editor tool when no existing one fits the user's intent. Pops a Proposal card in the chat (Accept / Skip / Cancel); on Accept, writes a sidecar JSON under `Saved/UAgent/Proposals/` carrying the proposed `name`/`description`/`whyNeeded`/`inputSchema`/`exampleCall` plus the originating user prompt, and tells the agent to halt. After the developer implements the new tool and restarts the editor, the next session shows a "pending tool proposal — retry?" banner that replays the saved prompt with the new tool now in `tools/list`. Cross-agent: portable to Claude, Codex, Gemini, etc. through standard MCP `tools/list` and the prompt-array standing instruction.

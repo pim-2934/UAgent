@@ -16,33 +16,37 @@ static const FString MCPMethodPrefix = TEXT("_ue5/");
 FMCPProtocol::FMCPProtocol(TSharedPtr<FACPToolRegistry> InRegistry)
     : Registry(MoveTemp(InRegistry)) {}
 
-TSharedPtr<FJsonObject>
-FMCPProtocol::Dispatch(const TSharedRef<FJsonObject> &Msg) {
+void FMCPProtocol::Dispatch(const TSharedRef<FJsonObject> &Msg,
+                            FResponseCallback OnResponse) {
   const TSharedPtr<FJsonValue> Id = Msg->TryGetField(TEXT("id"));
 
   // Notifications (no id) carry no response envelope.
   if (!Id.IsValid()) {
-    return nullptr;
+    OnResponse(nullptr);
+    return;
   }
 
   FString Method;
   Msg->TryGetStringField(TEXT("method"), Method);
 
   if (Method == TEXT("initialize")) {
-    return HandleInitialize(Id);
+    OnResponse(HandleInitialize(Id));
+    return;
   }
   if (Method == TEXT("tools/list")) {
-    return HandleToolsList(Id);
+    OnResponse(HandleToolsList(Id));
+    return;
   }
   if (Method == TEXT("tools/call")) {
     const TSharedPtr<FJsonObject> *ParamsObj = nullptr;
     Msg->TryGetObjectField(TEXT("params"), ParamsObj);
-    return HandleToolsCall(Id,
-                           ParamsObj ? *ParamsObj : TSharedPtr<FJsonObject>());
+    HandleToolsCall(Id, ParamsObj ? *ParamsObj : TSharedPtr<FJsonObject>(),
+                    MoveTemp(OnResponse));
+    return;
   }
 
-  return MakeError(Id, -32601,
-                   FString::Printf(TEXT("method not found: %s"), *Method));
+  OnResponse(MakeError(Id, -32601,
+                       FString::Printf(TEXT("method not found: %s"), *Method)));
 }
 
 TSharedRef<FJsonObject>
@@ -103,17 +107,19 @@ FMCPProtocol::HandleToolsList(const TSharedPtr<FJsonValue> &Id) {
   return MakeResult(Id, Result);
 }
 
-TSharedRef<FJsonObject>
-FMCPProtocol::HandleToolsCall(const TSharedPtr<FJsonValue> &Id,
-                              const TSharedPtr<FJsonObject> &Params) {
+void FMCPProtocol::HandleToolsCall(const TSharedPtr<FJsonValue> &Id,
+                                   const TSharedPtr<FJsonObject> &Params,
+                                   FResponseCallback OnResponse) {
   if (!Params.IsValid()) {
-    return MakeError(Id, -32602, TEXT("missing params"));
+    OnResponse(MakeError(Id, -32602, TEXT("missing params")));
+    return;
   }
 
   FString Name;
   Params->TryGetStringField(TEXT("name"), Name);
   if (Name.IsEmpty()) {
-    return MakeError(Id, -32602, TEXT("missing name"));
+    OnResponse(MakeError(Id, -32602, TEXT("missing name")));
+    return;
   }
 
   const TSharedPtr<FJsonObject> *ArgsObj = nullptr;
@@ -125,40 +131,47 @@ FMCPProtocol::HandleToolsCall(const TSharedPtr<FJsonValue> &Id,
   const TSharedPtr<IACPTool> Tool =
       Registry.IsValid() ? Registry->Find(Method) : nullptr;
   if (!Tool.IsValid()) {
-    return MakeError(Id, -32601,
-                     FString::Printf(TEXT("tool not found: %s"), *Name));
+    OnResponse(MakeError(Id, -32601,
+                         FString::Printf(TEXT("tool not found: %s"), *Name)));
+    return;
   }
 
-  const FToolResponse Response = Tool->Execute(Arguments);
+  // ExecuteAsync defaults to forwarding to Execute() and firing the callback
+  // synchronously, so synchronous tools take the same dispatch path as
+  // deferred ones. Capture this by raw pointer — the protocol object outlives
+  // any in-flight request because FMCPServer destroys the protocol only
+  // after Stop(), which removes the HTTP route first.
+  Tool->ExecuteAsync(Arguments, [this, Id, OnResponse = MoveTemp(OnResponse)](
+                                    FToolResponse Response) {
+    // MCP signals tool failure via isError + a text content block, NOT
+    // via a JSON-RPC error envelope. JSON-RPC errors are reserved for
+    // protocol issues (parse, missing method, malformed params).
+    TSharedRef<FJsonObject> McpResult = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> Content;
 
-  // MCP signals tool failure via isError + a text content block, NOT via
-  // a JSON-RPC error envelope. JSON-RPC errors are reserved for protocol
-  // issues (parse, missing method, malformed params).
-  TSharedRef<FJsonObject> McpResult = MakeShared<FJsonObject>();
-  TArray<TSharedPtr<FJsonValue>> Content;
-
-  if (Response.Error.IsSet()) {
-    TSharedRef<FJsonObject> Block = MakeShared<FJsonObject>();
-    Block->SetStringField(TEXT("type"), TEXT("text"));
-    Block->SetStringField(TEXT("text"), Response.Error->Message);
-    Content.Add(MakeShared<FJsonValueObject>(Block));
-    McpResult->SetBoolField(TEXT("isError"), true);
-  } else {
-    FString Serialized;
-    if (Response.Result.IsValid()) {
-      const TSharedRef<TJsonWriter<>> W =
-          TJsonWriterFactory<>::Create(&Serialized);
-      FJsonSerializer::Serialize(Response.Result.ToSharedRef(), W);
+    if (Response.Error.IsSet()) {
+      TSharedRef<FJsonObject> Block = MakeShared<FJsonObject>();
+      Block->SetStringField(TEXT("type"), TEXT("text"));
+      Block->SetStringField(TEXT("text"), Response.Error->Message);
+      Content.Add(MakeShared<FJsonValueObject>(Block));
+      McpResult->SetBoolField(TEXT("isError"), true);
+    } else {
+      FString Serialized;
+      if (Response.Result.IsValid()) {
+        const TSharedRef<TJsonWriter<>> W =
+            TJsonWriterFactory<>::Create(&Serialized);
+        FJsonSerializer::Serialize(Response.Result.ToSharedRef(), W);
+      }
+      TSharedRef<FJsonObject> Block = MakeShared<FJsonObject>();
+      Block->SetStringField(TEXT("type"), TEXT("text"));
+      Block->SetStringField(TEXT("text"), Serialized);
+      Content.Add(MakeShared<FJsonValueObject>(Block));
+      McpResult->SetBoolField(TEXT("isError"), false);
     }
-    TSharedRef<FJsonObject> Block = MakeShared<FJsonObject>();
-    Block->SetStringField(TEXT("type"), TEXT("text"));
-    Block->SetStringField(TEXT("text"), Serialized);
-    Content.Add(MakeShared<FJsonValueObject>(Block));
-    McpResult->SetBoolField(TEXT("isError"), false);
-  }
 
-  McpResult->SetArrayField(TEXT("content"), Content);
-  return MakeResult(Id, McpResult);
+    McpResult->SetArrayField(TEXT("content"), Content);
+    OnResponse(MakeResult(Id, McpResult));
+  });
 }
 
 TSharedRef<FJsonObject>

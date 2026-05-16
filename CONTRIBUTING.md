@@ -99,22 +99,25 @@ virtual bool IsReadOnly() const override { return false; }
 Pure-virtual: every tool must classify itself. See `CreateBlueprintTool.cpp` (mutating) and `ListAssetsTool.cpp` (read-only) for the pattern.
 
 What this drives:
-- **Permission gating.** `RequestPermissionTool` looks the tool up by name in the registry and consults `IsReadOnly()`. Read Only auto-allows read tools / auto-rejects mutating ones; Default auto-allows reads and prompts the user via the chat permission card on mutations.
+- **Permission gating.** `RequestPermissionTool` auto-allows read-only tools (so the agent doesn't nag for queries) and defers mutating tools to the user via the chat permission card. Whether the agent asks at all is controlled by its own advertised **session mode** (`session/set_mode` — see [Session modes](#session-modes-and-the-mode-dropdown) below): Claude's *acceptEdits* and *bypassPermissions* skip the call entirely; Codex's *full-access* does the same. There is no UAgent-side override that forces auto-deny or auto-allow regardless of mode — choose the agent's mode to change behavior.
 - **MCP `annotations.readOnlyHint`.** `FMCPServer` emits this in `tools/list` for read-only tools so any spec-respecting external MCP client (Claude Desktop, Cursor, Zed) can also classify them. `claude-agent-acp` itself currently ignores annotations, so the in-process registry lookup is what actually gates the chat tab.
 
 If a tool only ever changes ephemeral editor UI state (focus, opening a window) and never touches saved data, it counts as read-only — see `OpenAssetTool` and `FocusInContentBrowserTool` for the precedent. Anything that writes a file, dirties an asset, edits a property, or modifies a level counts as mutating — including writing scratch artifacts under `Saved/` (e.g. `capture_viewport`'s PNG output).
 
-#### Runtime: how a request gets answered
+#### Session modes and the mode dropdown
 
-`session/request_permission` is handled by `FRequestPermissionTool` (in `Tools/Session/`), which reads the chat window's selected mode and the tool's `IsReadOnly()` and decides:
+The **Mode:** dropdown at the bottom of the chat is **purely agent-advertised**: its entries come from the `modes` array in the agent's `session/new` response (Claude exposes *default* / *acceptEdits* / *plan* / *bypassPermissions*; Codex exposes *read-only* / *default* / *full-access*; other agents advertise whatever they want). Picking an entry sends `session/set_mode`; subsequent `current_mode_update` notifications keep the UI in sync. UAgent does not interpret mode IDs or impose its own gating layer on top — the agent itself decides whether to call `request_permission` based on the active mode.
 
-- **Full Access** — always picks `allow_once` (or `allow_always` as fallback) from the agent's `options[]` and returns synchronously.
-- **Read Only** — picks `allow_once` for read-only tools, `reject_once` otherwise. Synchronous.
-- **Default** — read-only tools auto-allow; mutating tools defer via `FPermissionBroker::Get().Request(...)`. The broker hands the request to the chat window, which appends a permission card to the transcript and stores the completion callback. When the user clicks Accept/Cancel, the chat resolves the callback and the tool's `ExecuteAsync` continuation echoes the matching `optionId` back to the agent.
+#### Runtime: how a permission request gets answered
 
-Because `Default` mode has to wait on user input, `IACPTool::ExecuteAsync` exists alongside `Execute` — its default implementation just forwards to `Execute` synchronously, but tools that need to defer override it. `FACPClient::HandleRequest` always dispatches via `ExecuteAsync` and captures the tool by shared-ref so it survives the deferral.
+`session/request_permission` is handled by `FRequestPermissionTool` (in `Tools/Session/`), which classifies the incoming call and decides:
 
-The MCP-tool kind heuristic in `FRequestPermissionTool` (looking up the `_ue5/<name>` tool in the registry by name) only matters because `claude-agent-acp` 0.31.0 always tags MCP tools `kind="other"`. Any spec-respecting agent that reads our `annotations.readOnlyHint` and emits a real `kind` will be classified by `kind` directly without the registry round-trip.
+- **Read-only call** — auto-allow synchronously. The classification combines the ACP `toolCall.kind` (`read` / `search` / `think` / `fetch`) with an `IsReadOnly()` lookup against the in-process registry keyed by the MCP tool name (parsed from the `mcp__<server>__<name>` `toolCall.title`). The tool returns `allow_once` (or `allow_always` as fallback) from the agent's `options[]`.
+- **Mutating call** — defer via `FPermissionBroker::Get().Request(...)`. The broker hands the request to the chat window, which appends a permission card to the transcript and stores the completion callback. When the user clicks Accept/Cancel, the chat resolves the callback and the tool's `ExecuteAsync` continuation echoes the matching `optionId` (`allow_once` / `reject_once`) back to the agent.
+
+Because the mutating path has to wait on user input, `IACPTool::ExecuteAsync` exists alongside `Execute` — its default implementation just forwards to `Execute` synchronously, but tools that need to defer override it. `FACPClient::HandleRequest` always dispatches via `ExecuteAsync` and captures the tool by shared-ref so it survives the deferral.
+
+The registry round-trip is necessary because `claude-agent-acp` 0.31.0 always tags MCP tools `kind="other"` (its `toolInfoFromToolUse` only classifies Claude's built-in tools). Any spec-respecting agent that reads our `annotations.readOnlyHint` and emits a real `kind` will be classified by `kind` directly without the registry lookup.
 
 ### Shared helpers (`UAgent::Common`, in `Private/Tools/Common/`)
 
@@ -177,6 +180,14 @@ Worked example: `Source/UAgent/Private/Tools/Blueprint/SetComponentMaterialTool.
 
 Do not try to route this through `FBlueprintEditorUtils::PostEditChangeBlueprintActors` or a compile-flag: the former is too coarse (actor-level `PostEditChange`, not property-level), and no compile flag exists that forces template→instance sync for already-placed actors.
 
+## Developer mode — `propose_missing_tool`
+
+When `UUAgentSettings::bDeveloperMode` is on **and** the plugin's `Source/UAgent/Private/Tools/` directory is writable, the registry exposes one extra tool — `propose_missing_tool` — and prepends a standing instruction to every prompt asking the agent to call it whenever the registered tool set doesn't cover the user's intent. Both surfaces are gated at registration time (one site in `BuiltinTools.cpp`, one site in `SACPChatWindow::OnSendClicked`); when the gate is closed, neither MCP `tools/list` nor the prompt blocks change. Toggling the setting requires an editor restart.
+
+When the agent calls `propose_missing_tool` it surfaces a "tool proposal" card via `FProposalBroker` (parallel to `FPermissionBroker`). Accept writes a sidecar under `Saved/UAgent/Proposals/<UTC>-<name>.json` containing the proposed tool spec plus the originating user prompt, and tells the agent to halt. The sidecar survives the editor restart you need to register the new tool; on next session start, `SACPChatWindow::ScanForPendingProposals` reads the directory and surfaces a Retry/Dismiss banner per pending entry. Retry replays the saved prompt — with the new tool now visible in `tools/list`.
+
+**Adding a new tool requires a full editor restart, not Live Coding.** Live Coding can patch existing function bodies but cannot reliably add new global ctors against the singleton tool registry — `RegisterBuiltinTools` already ran with the old factory list. Trust the halt-and-restart cycle; don't try to skip it.
+
 ## Code style
 
 C++ is formatted with `clang-format` against the `.clang-format` at the repo root (`BasedOnStyle: LLVM`). Before sending a PR:
@@ -194,5 +205,5 @@ The `clang-format` GitHub Action (`.github/workflows/clang-format.yml`) re-check
 4. `FTSTicker` on the game thread drains the queue and fires `OnMessage` to `FACPClient::HandleIncoming`. Response callbacks and `session/update` notifications go to their own handlers; agent→client requests are looked up in `FACPToolRegistry` by `method` and delegated to the matching `IACPTool::ExecuteAsync` (which forwards to the synchronous `Execute` for tools that don't need to defer — see [Permission classification](#permission-classification)).
 5. `FACPClient` sends `initialize` with `clientCapabilities.fs.{readTextFile,writeTextFile}` derived from whether those tools are registered, reads `agentCapabilities.mcpCapabilities.http` from the response, then `session/new` with `cwd = FPaths::ProjectDir()` and an `mcpServers` array containing the in-editor HTTP MCP server (only when the agent advertises HTTP support and the chat window passed a URL via `SetMcpServerUrl`).
 6. The `session/new` response can include `configOptions` — agent-advertised typed selectors (Claude exposes a `model` category). They're parsed into `FConfigOption` and held on the client; the chat window subscribes to `OnAgentSettingsChanged` and surfaces `category == "model"` entries as a **Model:** dropdown next to the permission-mode dropdown. Picking a value calls `FACPClient::SetConfigOption`, which optimistically mirrors the choice and fires `session/set_config_option` to the agent. Subsequent `config_option_update` notifications overwrite the local snapshot before the broadcast, so subscribers querying `GetConfigOptions()` during their handler always see the post-change state.
-7. When the user sends a message, `SACPChatWindow::OnSendClicked` builds a `prompt` array = auto-context blocks (open assets, truncated) + @-mentioned chips + a final text block, and posts `session/prompt`.
+7. When the user sends a message, `SACPChatWindow::OnSendClicked` builds a `prompt` array = auto-context blocks (open assets, truncated) + @-mentioned chips + a final text block, and posts `session/prompt`. On the first prompt of each session, if `<ProjectDir>/AGENTS.md` exists its contents are prepended as a project-context block (wrapped with a `Project context (AGENTS.md):` header) so the agent sees the host project's conventions before any per-asset context. `AGENTS.md` is the cross-agent convention (agents.md spec, also read by Codex/Cursor/Aider); UAgent does not look for `CLAUDE.md` or `README.md`. The block is sent once per session — a new session re-reads the file, so edits between sessions are picked up without restart.
 8. Streamed `session/update` notifications append chunks to the active agent message or create/update tool-call cards. Final response with `stopReason` closes out the turn.

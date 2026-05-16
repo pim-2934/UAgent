@@ -84,12 +84,45 @@ public:
   /** Sends a session/cancel notification. */
   void CancelPrompt();
 
+  /** Result callback for ListSessions — empty array + non-empty Error on
+   * failure, populated array + empty Error on success. */
+  using FListSessionsCallback =
+      TFunction<void(TArray<FSessionInfo> /*Sessions*/, FString /*Error*/)>;
+
+  /**
+   * Sends `session/list` filtered to the current project's cwd. Requires the
+   * agent to advertise `sessionCapabilities.list` — callers should gate the
+   * UI on SupportsSessionList() rather than catching the error here. The
+   * callback fires on the game thread once. Pagination (`nextCursor`) is
+   * intentionally ignored in this phase: we surface the first page only.
+   */
+  void ListSessions(FListSessionsCallback Callback);
+
+  /**
+   * Sends `session/load` to replay an existing session. Drops local state
+   * (config options, modes, current commands) so the agent's replayed
+   * `session/update` notifications can repopulate from scratch. Requires
+   * State == Ready and the agent to advertise `sessionCapabilities.load`.
+   * Conversation replay reaches the chat via the normal OnSessionUpdate
+   * fanout — no special handling needed on the UI side beyond clearing the
+   * message log before calling.
+   */
+  void LoadSession(const FString &SessionIdToLoad);
+
   /**
    * Sets one of the agent's advertised config options (model, …). No-op when
    * SessionId is empty. Optimistically updates the local snapshot; the
    * agent's `config_option_update` notification overrides if needed.
    */
   void SetConfigOption(const FString &ConfigId, const FString &Value);
+
+  /**
+   * Switches the session to one of the modes the agent advertised in
+   * session/new. No-op when SessionId is empty or the mode id isn't in the
+   * available set. Optimistically updates CurrentModeId; the agent's
+   * `current_mode_update` notification overrides if needed.
+   */
+  void SetSessionMode(const FString &ModeId);
 
   EClientState GetState() const { return State; }
   const FString &GetSessionId() const { return SessionId; }
@@ -100,6 +133,37 @@ public:
   const TArray<FConfigOption> &GetConfigOptions() const {
     return ConfigOptions;
   }
+
+  /** Modes the agent advertised in session/new. Empty when the agent doesn't
+   * support modes (or session not yet created). */
+  const TArray<FSessionMode> &GetAvailableModes() const {
+    return AvailableModes;
+  }
+
+  /** Id of the currently active mode. Empty when the agent doesn't support
+   * modes. */
+  const FString &GetCurrentModeId() const { return CurrentModeId; }
+
+  /** Slash commands the agent has advertised — initially via session/new,
+   * refreshed by available_commands_update notifications. Empty when the
+   * agent doesn't expose any (or session not yet created). */
+  const TArray<FAvailableCommand> &GetAvailableCommands() const {
+    return AvailableCommands;
+  }
+
+  /** True when the agent advertised `sessionCapabilities.list` in
+   * `initialize` — gates the History dropdown in the chat UI. */
+  bool SupportsSessionList() const { return bAgentSupportsSessionList; }
+
+  /** True when the agent advertised `sessionCapabilities.load` — gates
+   * actually invoking session/load from a History pick. Most agents that
+   * support list also support load, but the spec treats them independently. */
+  bool SupportsSessionLoad() const { return bAgentSupportsSessionLoad; }
+
+  /** Latest plan snapshot the agent has emitted via a `plan` session/update.
+   * Empty when the agent hasn't sent one this session (or after Stop /
+   * load). Per spec, each plan notification replaces this in full. */
+  const TArray<FPlanEntry> &GetCurrentPlan() const { return CurrentPlan; }
 
   FOnClientStateChanged OnStateChanged;
   FOnSessionUpdateDelegate OnSessionUpdate;
@@ -138,8 +202,17 @@ private:
 
   FString McpServerUrl;
   bool bAgentSupportsHttpMcp = false;
+  bool bAgentSupportsSessionList = false;
+  bool bAgentSupportsSessionLoad = false;
 
   TArray<FConfigOption> ConfigOptions;
+
+  TArray<FSessionMode> AvailableModes;
+  FString CurrentModeId;
+
+  TArray<FAvailableCommand> AvailableCommands;
+
+  TArray<FPlanEntry> CurrentPlan;
 
   // Guard against Transport::Shutdown's synchronous OnExit being mistaken
   // for an unexpected agent crash during an intentional Stop().

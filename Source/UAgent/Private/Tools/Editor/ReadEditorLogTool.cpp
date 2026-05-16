@@ -50,21 +50,27 @@ public:
   virtual bool IsReadOnly() const override { return true; }
 
   virtual FString GetDescription() const override {
-    return TEXT("Tail the editor's Output Log. Filter by category substring "
-                "and/or minimum severity. Pass sinceId (from a previous call's "
-                "nextId) to read only new lines.");
+    return TEXT(
+        "Tail the editor's Output Log. Filter by category substring and/or "
+        "minimum severity. Pass sinceId (from a previous call's nextId) to "
+        "read only new lines. Pass sincePieStart=true to clip results to "
+        "lines emitted after the most recent Play-In-Editor start — useful "
+        "to skip editor-startup noise when you only care about what "
+        "happened during the current playtest. Response includes pieStartId "
+        "when sincePieStart was honored.");
   }
 
   virtual TSharedPtr<FJsonObject> GetInputSchema() const override {
     return ParseJsonObject(LR"JSON({
-					"type": "object",
-					"properties": {
-						"categoryContains": { "type": "string", "description": "Only lines whose category contains this substring (case-insensitive), e.g. 'UAgent' or 'LogBlueprint'" },
-						"minVerbosity": { "type": "string", "description": "Minimum severity: Fatal|Error|Warning|Display|Log|Verbose. Default Log." },
-						"limit": { "type": "integer", "description": "Max lines to return (default 200)", "minimum": 1 },
-						"sinceId": { "type": "integer", "description": "Only return lines with id > this. Use nextId from a previous call to tail." }
-					}
-				})JSON");
+						"type": "object",
+						"properties": {
+							"categoryContains": { "type": "string", "description": "Only lines whose category contains this substring (case-insensitive), e.g. 'UAgent' or 'LogBlueprint'" },
+							"minVerbosity": { "type": "string", "description": "Minimum severity: Fatal|Error|Warning|Display|Log|Verbose. Default Log." },
+							"limit": { "type": "integer", "description": "Max lines to return (default 200)", "minimum": 1 },
+							"sinceId": { "type": "integer", "description": "Only return lines with id > this. Use nextId from a previous call to tail." },
+							"sincePieStart": { "type": "boolean", "description": "Clip to lines emitted after the most recent PreBeginPIE. Combines with sinceId as max(sinceId, pieStartId). Returns empty when no PIE has started this editor session." }
+						}
+					})JSON");
   }
 
   virtual FToolResponse
@@ -73,22 +79,30 @@ public:
     FString MinVerbStr;
     int32 Limit = 200;
     double SinceIdDouble = 0;
+    bool bSincePieStart = false;
 
     if (Params.IsValid()) {
       Params->TryGetStringField(TEXT("categoryContains"), CategoryContains);
       Params->TryGetStringField(TEXT("minVerbosity"), MinVerbStr);
       Params->TryGetNumberField(TEXT("limit"), Limit);
       Params->TryGetNumberField(TEXT("sinceId"), SinceIdDouble);
+      Params->TryGetBoolField(TEXT("sincePieStart"), bSincePieStart);
     }
     if (Limit <= 0)
       Limit = 200;
     const ELogVerbosity::Type MinV =
         MinVerbStr.IsEmpty() ? ELogVerbosity::Log : ParseVerbosity(MinVerbStr);
 
+    int64 EffectiveSinceId = static_cast<int64>(SinceIdDouble);
+    const int64 PieStartId = FEditorLogSink::Get().GetLastPieStartId();
+    if (bSincePieStart && PieStartId > EffectiveSinceId) {
+      EffectiveSinceId = PieStartId;
+    }
+
     TArray<FEditorLogLine> Lines;
     int64 NextId = 0;
     FEditorLogSink::Get().GetLines(
-        static_cast<int64>(SinceIdDouble), Limit,
+        EffectiveSinceId, Limit,
         CategoryContains.IsEmpty() ? FName() : FName(*CategoryContains), MinV,
         Lines, NextId);
 
@@ -106,6 +120,10 @@ public:
     TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetArrayField(TEXT("lines"), Out);
     Result->SetNumberField(TEXT("nextId"), static_cast<double>(NextId));
+    if (bSincePieStart) {
+      Result->SetNumberField(TEXT("pieStartId"),
+                             static_cast<double>(PieStartId));
+    }
     return FToolResponse::Ok(Result);
   }
 };

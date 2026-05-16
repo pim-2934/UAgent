@@ -61,6 +61,8 @@ public class UAgent : ModuleRules
 				"EditorScriptingUtilities", // UEditorAssetLibrary (duplicate/save)
 				"LevelEditor",              // ULevelEditorSubsystem (create_level)
 				"MaterialEditor",           // UMaterialEditingLibrary (create_material*)
+				"UMG",                      // UWidgetTree, UWidget, UPanelWidget, UPanelSlot (add_widget / set_widget_*)
+				"UMGEditor",                // UWidgetBlueprint (Widget Blueprint authoring)
 			}
 		);
 	}

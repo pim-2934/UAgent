@@ -12,9 +12,15 @@ https://github.com/user-attachments/assets/1e08db26-0494-4bf5-b88e-bbbe2756e5bf
 - **Streaming responses** — agent message chunks appended live.
 - **Tool-call cards** — rendered inline with status (pending / in-progress / completed).
 - **Auto context** — whatever assets you have open in the editor are attached to each message automatically, so the agent sees what you're working on. Toggle with **Auto-Include Open Assets**.
+- **`AGENTS.md` project context** — on the first prompt of each session, if `<ProjectDir>/AGENTS.md` exists its contents are prepended as a project-context block so the agent sees your project's conventions before any per-asset context. UAgent follows the cross-agent `AGENTS.md` convention (also read by Codex / Cursor / Aider); edits between sessions are picked up automatically.
 - **@-mention** — type `@` in the input to pick any project asset from a live-filtered list. Adds a chip you can remove.
-- **Permission gating** — pick **Full Access**, **Read Only**, or **Default** from the dropdown at the bottom of the chat. In **Default** mode, mutating tool calls surface a permission card with an **Accept / Cancel** prompt and the raw arguments the agent wants to pass; read-only tools auto-allow. The chosen mode is persisted per user.
+- **Slash commands** — type `/` in the input to pick from the agent's advertised commands (per ACP `availableCommands` / `available_commands_update`). The popup stays in sync with what the agent currently exposes.
+- **Plan strip** — when the agent emits a structured plan (e.g. Claude's `/plan`-style task list), it renders as a sticky strip above the input row and updates in place as tasks complete.
+- **Mode picker** — when the agent advertises session modes (Claude's *default* / *acceptEdits* / *plan* / *bypassPermissions*, Codex's *read-only* / *default* / *full-access*), a **Mode:** dropdown appears at the bottom of the chat. The mode set is whatever the backing agent broadcasts in `session/new`; switching sends `session/set_mode` and the agent's `current_mode_update` notification keeps the UI in sync. Your pick is persisted per user and re-applied on subsequent sessions when the mode is still offered.
+- **Permission cards** — for mutating tools the agent didn't pre-approve under the current mode, an **Accept / Cancel** card with the raw arguments rendered as Markdown appears inline in the chat; read-only tools auto-allow.
 - **Model picker** — when the agent advertises model options (the Claude CLI does), a **Model:** dropdown appears next to the mode dropdown. Your pick is persisted per user and re-applied on subsequent sessions when the model is still offered.
+- **Usage indicator** — a small label under the Send button shows the running context-budget % and (when the agent reports it) the per-turn cost from `usage_update` notifications.
+- **Session history** — when the agent supports it (Claude does), a **Recent** button in the header lists previous sessions and resumes the picked one via `session/load`.
 - **Export transcript** — save the current chat as Markdown via the export button in the header.
 - **Tools** — the agent can read/write project files, inspect and edit Blueprints, drive the editor, and more. See [TOOLS.md](TOOLS.md) for the full list.
 
@@ -46,35 +52,17 @@ You need an ACP-compatible agent backend. The plugin is currently tested with th
 
 #### Claude CLI (recommended)
 
-Install the Claude CLI:
+Install both components per their official instructions:
 
-```
-npm install -g @anthropic-ai/claude-code
-```
-
-Authenticate once — run `claude login` and follow the prompt, or set `ANTHROPIC_API_KEY` in your environment.
-
-Install the ACP adapter that bridges the CLI to this plugin:
-
-```
-npm install -g @agentclientprotocol/claude-agent-acp
-```
+- **Claude Code CLI** — [setup docs](https://code.claude.com/docs/en/setup)
+- **claude-agent-acp** (ACP adapter that bridges the CLI to this plugin) — [repository](https://github.com/agentclientprotocol/claude-agent-acp)
 
 #### Codex CLI
 
-Install the Codex CLI:
+Install both components per their official instructions:
 
-```
-npm install -g @openai/codex
-```
-
-Authenticate once — run `codex login` and follow the prompt, or set `OPENAI_API_KEY` (or `CODEX_API_KEY`) in your environment.
-
-Install the ACP adapter that bridges the CLI to this plugin:
-
-```
-npm install -g @zed-industries/codex-acp
-```
+- **OpenAI Codex CLI** — [installation guide](https://developers.openai.com/codex/cli)
+- **codex-acp** (ACP adapter that bridges the CLI to this plugin) — [repository](https://github.com/zed-industries/codex-acp)
 
 ### Plugin settings
 
@@ -89,8 +77,10 @@ npm install -g @zed-industries/codex-acp
 | **Request Timeout Seconds** | `300` (default, `0` disables) |
 | **Enable MCP Server** | ✓ (default) |
 | **MCP Server Port** | `47777` (default) |
+| **Developer Mode** | ☐ (default). Exposes the `propose_missing_tool` flow to the agent. Also requires the plugin's `Source/UAgent/Private/Tools/` directory to be writable. Toggling requires an editor restart. See [TOOLS.md → Developer (gated)](TOOLS.md#developer-gated). |
+| **Log Agent JSON** | ☐ (default). Logs every ACP JSON-RPC line crossing the transport (both outbound `>>` and inbound `<<`) to the Output Log under `LogUAgent`. Useful for debugging protocol-level issues. Takes effect immediately — no restart needed. |
 
-Permission Mode and Model are picked from the dropdowns at the bottom of the chat window (not in Project Settings) and persisted per user under `EditorPerProjectUserSettings.ini` so the choice doesn't leak into the project's shared config.
+Session Mode and Model are picked from the dropdowns at the bottom of the chat window (not in Project Settings) and persisted per user under `EditorPerProjectUserSettings.ini` so the choice doesn't leak into the project's shared config.
 
 ### First run
 

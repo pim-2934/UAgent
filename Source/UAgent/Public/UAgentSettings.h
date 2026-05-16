@@ -4,35 +4,27 @@
 #include "Engine/DeveloperSettings.h"
 #include "UAgentSettings.generated.h"
 
-/**
- * Governs how session/request_permission is answered. Surfaced as a dropdown
- * under the chat input; persisted per-user via PermissionModeStore (not in
- * UUAgentSettings, so it doesn't leak into the project's shared config).
- */
-UENUM()
-enum class EACPPermissionMode : uint8 {
-  ReadOnly UMETA(DisplayName = "Read Only"),
-  Default UMETA(DisplayName = "Default"),
-  FullAccess UMETA(DisplayName = "Full Access")
-};
-
 namespace UAgent {
 /**
- * Per-user persistence for the chat window's selected permission mode. Backed
- * by GEditorPerProjectIni so the choice survives editor restarts without
- * being committed to the project's shared Engine.ini.
+ * Per-user persistence for the user's preferred ACP session mode. Stored as
+ * the agent's mode `id` string (e.g. "plan", "acceptEdits" for Claude;
+ * "read-only", "default" for Codex), which is agent-specific — empty when no
+ * preference has been picked yet, or when the saved value isn't in the
+ * current agent's advertised set. Backed by GEditorPerProjectIni so the
+ * choice survives editor restarts without being committed to the project's
+ * shared Engine.ini.
  */
-namespace PermissionModeStore {
-UAGENT_API EACPPermissionMode Load();
-UAGENT_API void Save(EACPPermissionMode Mode);
-} // namespace PermissionModeStore
+namespace SessionModeStore {
+UAGENT_API FString Load();
+UAGENT_API void Save(const FString &ModeId);
+} // namespace SessionModeStore
 
 /**
  * Per-user persistence for the user's preferred agent model. Stored as the
  * raw `value` string from the agent's configOptions (e.g. "claude-opus-4-5"),
  * which is agent-specific — empty when no preference has been picked yet, or
  * when the saved value isn't offered by the current agent. Same backing store
- * as PermissionModeStore.
+ * as SessionModeStore.
  */
 namespace ModelStore {
 UAGENT_API FString Load();
@@ -97,4 +89,37 @@ public:
             meta = (DisplayName = "MCP Server Port", ClampMin = 1024,
                     ClampMax = 65535))
   int32 MCPServerPort = 47777;
+
+  /**
+   * Exposes developer-only affordances to the agent — currently the
+   * propose_missing_tool flow that lets it surface clearly-missing tools
+   * instead of improvising. Off by default; do not enable in shipped projects.
+   * Also gated at runtime on the plugin's Source/UAgent/Private/Tools
+   * directory being writable, so flipping this on for a binary-only install
+   * has no effect.
+   *
+   * Toggling this requires an editor restart to take effect — tool
+   * registration runs once in StartupModule.
+   */
+  UPROPERTY(Config, EditAnywhere, Category = "Developer",
+            meta = (DisplayName = "Developer Mode",
+                    ToolTip = "Requires editor restart to take effect."))
+  bool bDeveloperMode = false;
+
+  /**
+   * When true, every ACP JSON-RPC line crossing the transport (both
+   * outbound `>>` and inbound `<<`) is logged to the Output Log under
+   * LogUAgent at Log level. Used to debug protocol-level issues such as
+   * mode advertisements / mode switches not landing as expected. Takes
+   * effect immediately — no restart needed.
+   */
+  // clang-format off
+  // UHT does not support adjacent-string-literal concatenation in meta=();
+  // keep the ToolTip on one line.
+  UPROPERTY(Config, EditAnywhere, Category = "Developer",
+            meta = (DisplayName = "Log Agent JSON",
+                    ToolTip = "Logs raw ACP JSON-RPC messages (both directions) to the Output Log."))
+  
+  bool bLogAgentJson = false;
+  // clang-format on
 };

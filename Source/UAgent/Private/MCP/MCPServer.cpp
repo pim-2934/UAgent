@@ -100,16 +100,6 @@ static bool IsLoopbackPeer(const TSharedPtr<FInternetAddr> &Addr) {
 
 bool FMCPServer::HandleRequest(const FHttpServerRequest &Request,
                                const FHttpResultCallback &OnComplete) {
-  auto SendJson = [&](const TSharedRef<FJsonObject> &Envelope) {
-    FString Serialized;
-    const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
-        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(
-            &Serialized);
-    FJsonSerializer::Serialize(Envelope, W);
-    OnComplete(
-        FHttpServerResponse::Create(Serialized, TEXT("application/json")));
-  };
-
   if (!IsLoopbackPeer(Request.PeerAddress)) {
     const FString PeerStr = Request.PeerAddress.IsValid()
                                 ? Request.PeerAddress->ToString(false)
@@ -129,26 +119,46 @@ bool FMCPServer::HandleRequest(const FHttpServerRequest &Request,
                                 Request.Body.Num());
   }
 
+  // Copy OnComplete into a shared cell so the dispatch callback can survive
+  // beyond the synchronous return below (the proposal-card path resolves
+  // asynchronously from the chat UI). FHttpResultCallback is a TFunction and
+  // copies cleanly; UE's HTTP framework already supports calling it later.
+  TSharedRef<FHttpResultCallback> Completer =
+      MakeShared<FHttpResultCallback>(OnComplete);
+
   TSharedPtr<FJsonObject> Msg;
   const TSharedRef<TJsonReader<>> Reader =
       TJsonReaderFactory<>::Create(BodyStr);
   if (!FJsonSerializer::Deserialize(Reader, Msg) || !Msg.IsValid()) {
-    SendJson(Protocol->MakeParseError(TEXT("Parse error")));
+    FString Serialized;
+    const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(
+            &Serialized);
+    FJsonSerializer::Serialize(Protocol->MakeParseError(TEXT("Parse error")),
+                               W);
+    (*Completer)(
+        FHttpServerResponse::Create(Serialized, TEXT("application/json")));
     return true;
   }
 
-  const TSharedPtr<FJsonObject> Response =
-      Protocol->Dispatch(Msg.ToSharedRef());
-  if (!Response.IsValid()) {
-    // Notification — no response body, 202 Accepted.
-    TUniquePtr<FHttpServerResponse> Resp =
-        FHttpServerResponse::Create(FString(), TEXT("application/json"));
-    Resp->Code = EHttpServerResponseCodes::Accepted;
-    OnComplete(MoveTemp(Resp));
-    return true;
-  }
-
-  SendJson(Response.ToSharedRef());
+  Protocol->Dispatch(Msg.ToSharedRef(), [Completer](
+                                            TSharedPtr<FJsonObject> Response) {
+    if (!Response.IsValid()) {
+      // Notification — no response body, 202 Accepted.
+      TUniquePtr<FHttpServerResponse> Resp =
+          FHttpServerResponse::Create(FString(), TEXT("application/json"));
+      Resp->Code = EHttpServerResponseCodes::Accepted;
+      (*Completer)(MoveTemp(Resp));
+      return;
+    }
+    FString Serialized;
+    const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(
+            &Serialized);
+    FJsonSerializer::Serialize(Response.ToSharedRef(), W);
+    (*Completer)(
+        FHttpServerResponse::Create(Serialized, TEXT("application/json")));
+  });
   return true;
 }
 } // namespace UAgent

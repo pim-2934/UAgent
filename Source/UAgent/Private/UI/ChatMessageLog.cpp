@@ -155,6 +155,59 @@ void FChatMessageLog::SetPermissionState(
   }
 }
 
+FString FChatMessageLog::AppendProposal(const FString &ProposalId,
+                                        const FString &ProposedName,
+                                        const FString &ProposedDescription,
+                                        const FString &WhyNeeded,
+                                        const FString &ArgsPreview) {
+  CloseAgentTurnIfOpen();
+  TSharedRef<FACPChatMessageItem> M = MakeShared<FACPChatMessageItem>();
+  M->Role = FACPChatMessageItem::ERole::Proposal;
+  M->ProposalId = ProposalId;
+  M->ProposedName = ProposedName;
+  M->ProposedDescription = ProposedDescription;
+  M->ProposalWhyNeeded = WhyNeeded;
+  M->ProposalArgsPreview = ArgsPreview;
+  M->ProposalState = FACPChatMessageItem::EProposalState::Pending;
+  Messages.Add(M);
+  OnChanged.Broadcast();
+  return M->ProposalId;
+}
+
+FString FChatMessageLog::AppendProposalReplay(const FString &ProposalId,
+                                              const FString &ProposedName,
+                                              const FString &OriginatingPrompt,
+                                              const FString &SidecarPath) {
+  // Replay banners are session-start surface, not part of an agent turn —
+  // skip CloseAgentTurnIfOpen so they layer cleanly above any system row
+  // appended just before.
+  TSharedRef<FACPChatMessageItem> M = MakeShared<FACPChatMessageItem>();
+  M->Role = FACPChatMessageItem::ERole::ProposalReplay;
+  M->ProposalId = ProposalId;
+  M->ProposedName = ProposedName;
+  M->Text = OriginatingPrompt; // displayed verbatim in the row
+  M->ProposalSidecarPath = SidecarPath;
+  M->ProposalState = FACPChatMessageItem::EProposalState::Pending;
+  Messages.Add(M);
+  OnChanged.Broadcast();
+  return M->ProposalId;
+}
+
+void FChatMessageLog::SetProposalState(
+    const FString &ProposalId, FACPChatMessageItem::EProposalState NewState) {
+  if (ProposalId.IsEmpty())
+    return;
+  for (const FACPChatMessageItemRef &Item : Messages) {
+    if ((Item->Role == FACPChatMessageItem::ERole::Proposal ||
+         Item->Role == FACPChatMessageItem::ERole::ProposalReplay) &&
+        Item->ProposalId == ProposalId) {
+      Item->ProposalState = NewState;
+      OnChanged.Broadcast();
+      return;
+    }
+  }
+}
+
 void FChatMessageLog::ApplySessionUpdate(const UAgent::FSessionUpdate &Update) {
   using UAgent::FSessionUpdate;
   switch (Update.Kind) {
