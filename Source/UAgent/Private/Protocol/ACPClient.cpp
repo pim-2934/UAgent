@@ -51,6 +51,10 @@ void FACPClient::Stop() {
   Peer.Reset();
   SessionId.Reset();
   ConfigOptions.Reset();
+  AvailableModes.Reset();
+  CurrentModeId.Reset();
+  AvailableCommands.Reset();
+  CurrentPlan.Reset();
   OnAgentSettingsChanged.Broadcast();
   SetState(EClientState::Disconnected);
   bStopping = false;
@@ -127,6 +131,8 @@ void FACPClient::SendInitialize() {
         }
 
         bAgentSupportsHttpMcp = false;
+        bAgentSupportsSessionList = false;
+        bAgentSupportsSessionLoad = false;
         if (Result.IsValid()) {
           const TSharedPtr<FJsonObject> *AgentCaps = nullptr;
           if (Result->TryGetObjectField(TEXT("agentCapabilities"), AgentCaps) &&
@@ -137,8 +143,23 @@ void FACPClient::SendInitialize() {
                 McpCaps && McpCaps->IsValid()) {
               (*McpCaps)->TryGetBoolField(TEXT("http"), bAgentSupportsHttpMcp);
             }
+            const TSharedPtr<FJsonObject> *SessionCaps = nullptr;
+            if ((*AgentCaps)
+                    ->TryGetObjectField(TEXT("sessionCapabilities"),
+                                        SessionCaps) &&
+                SessionCaps && SessionCaps->IsValid()) {
+              (*SessionCaps)
+                  ->TryGetBoolField(TEXT("list"), bAgentSupportsSessionList);
+              (*SessionCaps)
+                  ->TryGetBoolField(TEXT("load"), bAgentSupportsSessionLoad);
+            }
           }
         }
+        UE_LOG(LogUAgent, Log,
+               TEXT("Agent capabilities: mcp.http=%d, sessions.list=%d, "
+                    "sessions.load=%d"),
+               bAgentSupportsHttpMcp ? 1 : 0, bAgentSupportsSessionList ? 1 : 0,
+               bAgentSupportsSessionLoad ? 1 : 0);
         SendNewSession();
       });
 }
@@ -192,10 +213,55 @@ void FACPClient::SendNewSession() {
             ConfigArr) {
           ParseConfigOptions(*ConfigArr, ConfigOptions);
         }
+
+        // ACP `modes` object — spec says camelCase
+        // ({currentModeId, availableModes}) but older Claude CLI builds
+        // emit snake_case ({current_mode_id, available_modes}). Accept both
+        // so the dropdown survives an adapter version change.
+        AvailableModes.Reset();
+        CurrentModeId.Reset();
+        const TSharedPtr<FJsonObject> *ModesObj = nullptr;
+        if (Result->TryGetObjectField(TEXT("modes"), ModesObj) && ModesObj &&
+            ModesObj->IsValid()) {
+          if (!(*ModesObj)->TryGetStringField(TEXT("currentModeId"),
+                                              CurrentModeId)) {
+            (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
+                                           CurrentModeId);
+          }
+          const TArray<TSharedPtr<FJsonValue>> *ModesArr = nullptr;
+          if (!(*ModesObj)->TryGetArrayField(TEXT("availableModes"),
+                                             ModesArr) ||
+              !ModesArr) {
+            (*ModesObj)->TryGetArrayField(TEXT("available_modes"), ModesArr);
+          }
+          if (ModesArr) {
+            ParseSessionModes(*ModesArr, AvailableModes);
+          }
+        }
+
+        // Slash commands the agent advertises at session start. Agents that
+        // don't expose any (or only push them via available_commands_update)
+        // simply leave this empty; the chat's command picker stays inert
+        // until an update arrives.
+        AvailableCommands.Reset();
+        const TArray<TSharedPtr<FJsonValue>> *CmdArr = nullptr;
+        if (Result->TryGetArrayField(TEXT("availableCommands"), CmdArr) &&
+            CmdArr) {
+          ParseAvailableCommands(*CmdArr, AvailableCommands);
+        }
+
+        // Fresh session — no plan yet. A previous Stop() already cleared
+        // this, but resetting here keeps the invariant tight if Start()
+        // is ever reused without a paired Stop().
+        CurrentPlan.Reset();
+
         OnAgentSettingsChanged.Broadcast();
 
-        UE_LOG(LogUAgent, Log, TEXT("Session ready: %s (configOptions=%d)"),
-               *SessionId, ConfigOptions.Num());
+        UE_LOG(LogUAgent, Log,
+               TEXT("Session ready: %s (configOptions=%d, modes=%d, "
+                    "current='%s', commands=%d)"),
+               *SessionId, ConfigOptions.Num(), AvailableModes.Num(),
+               *CurrentModeId, AvailableCommands.Num());
         SetState(EClientState::Ready);
       });
 }
@@ -241,18 +307,176 @@ void FACPClient::CancelPrompt() {
   Peer.SendNotification(TEXT("session/cancel"), Params);
 }
 
+void FACPClient::ListSessions(FListSessionsCallback Callback) {
+  if (!Callback) {
+    return;
+  }
+  if (!bAgentSupportsSessionList) {
+    Callback({}, TEXT("agent did not advertise sessionCapabilities.list"));
+    return;
+  }
+
+  TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
+  // Filter to project cwd — without this the agent returns every session it
+  // remembers, including ones for other UE projects open under the same
+  // backing CLI install. The UE editor is single-project per process, so
+  // the cwd is unambiguous here.
+  Params->SetStringField(
+      TEXT("cwd"), FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+
+  Peer.SendRequest(
+      TEXT("session/list"), Params,
+      [CallbackCopy =
+           MoveTemp(Callback)](const TSharedPtr<FJsonObject> &Result,
+                               const TSharedPtr<FJsonObject> &Error) {
+        if (Error.IsValid()) {
+          FString Msg;
+          Error->TryGetStringField(TEXT("message"), Msg);
+          CallbackCopy({}, Msg.IsEmpty() ? TEXT("session/list failed") : Msg);
+          return;
+        }
+        TArray<FSessionInfo> Sessions;
+        if (Result.IsValid()) {
+          const TArray<TSharedPtr<FJsonValue>> *Arr = nullptr;
+          if (Result->TryGetArrayField(TEXT("sessions"), Arr) && Arr) {
+            ParseSessionInfos(*Arr, Sessions);
+          }
+        }
+        CallbackCopy(MoveTemp(Sessions), FString());
+      });
+}
+
+void FACPClient::LoadSession(const FString &SessionIdToLoad) {
+  if (SessionIdToLoad.IsEmpty()) {
+    return;
+  }
+  if (State != EClientState::Ready) {
+    UE_LOG(LogUAgent, Warning, TEXT("LoadSession while state=%d (need Ready)"),
+           (int32)State);
+    return;
+  }
+  if (!bAgentSupportsSessionLoad) {
+    ReportError(TEXT("session/load"),
+                TEXT("agent did not advertise sessionCapabilities.load"));
+    return;
+  }
+
+  // Drop everything that was specific to the old session — the agent will
+  // re-advertise modes / configOptions / available commands for the loaded
+  // session either in the result object or via fresh session/update
+  // notifications during replay. Broadcasting once here makes the chat
+  // tear down stale dropdowns before the replay starts.
+  ConfigOptions.Reset();
+  AvailableModes.Reset();
+  CurrentModeId.Reset();
+  AvailableCommands.Reset();
+  CurrentPlan.Reset();
+  OnAgentSettingsChanged.Broadcast();
+
+  SetState(EClientState::CreatingSession);
+
+  TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
+  Params->SetStringField(TEXT("sessionId"), SessionIdToLoad);
+  Params->SetStringField(
+      TEXT("cwd"), FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+
+  // Same MCP-server array shape as session/new. Re-advertising here keeps
+  // the loaded session wired to our in-editor MCP bridge — without it the
+  // agent would lose access to UE tools after a resume.
+  TArray<TSharedPtr<FJsonValue>> McpServers;
+  if (!McpServerUrl.IsEmpty() && bAgentSupportsHttpMcp) {
+    TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+    Entry->SetStringField(TEXT("type"), TEXT("http"));
+    Entry->SetStringField(TEXT("name"), TEXT("ue5"));
+    Entry->SetStringField(TEXT("url"), McpServerUrl);
+    Entry->SetArrayField(TEXT("headers"), TArray<TSharedPtr<FJsonValue>>{});
+    McpServers.Add(MakeShared<FJsonValueObject>(Entry));
+  }
+  Params->SetArrayField(TEXT("mcpServers"), McpServers);
+
+  Peer.SendRequest(
+      TEXT("session/load"), Params,
+      [this, SessionIdToLoad](const TSharedPtr<FJsonObject> &Result,
+                              const TSharedPtr<FJsonObject> &Error) {
+        if (Error.IsValid()) {
+          FString Msg;
+          Error->TryGetStringField(TEXT("message"), Msg);
+          ReportError(TEXT("session/load"), Msg);
+          return;
+        }
+        SessionId = SessionIdToLoad;
+
+        // Result MAY include initial mode / model / configOptions snapshots
+        // for the loaded session. Parsing mirrors SendNewSession so a
+        // freshly-loaded session can drive the same UI surfaces.
+        if (Result.IsValid()) {
+          const TArray<TSharedPtr<FJsonValue>> *ConfigArr = nullptr;
+          if (Result->TryGetArrayField(TEXT("configOptions"), ConfigArr) &&
+              ConfigArr) {
+            ParseConfigOptions(*ConfigArr, ConfigOptions);
+          }
+
+          const TSharedPtr<FJsonObject> *ModesObj = nullptr;
+          if (Result->TryGetObjectField(TEXT("modes"), ModesObj) && ModesObj &&
+              ModesObj->IsValid()) {
+            if (!(*ModesObj)->TryGetStringField(TEXT("currentModeId"),
+                                                CurrentModeId)) {
+              (*ModesObj)->TryGetStringField(TEXT("current_mode_id"),
+                                             CurrentModeId);
+            }
+            const TArray<TSharedPtr<FJsonValue>> *ModesArr = nullptr;
+            if (!(*ModesObj)->TryGetArrayField(TEXT("availableModes"),
+                                               ModesArr) ||
+                !ModesArr) {
+              (*ModesObj)->TryGetArrayField(TEXT("available_modes"), ModesArr);
+            }
+            if (ModesArr) {
+              ParseSessionModes(*ModesArr, AvailableModes);
+            }
+          }
+
+          const TArray<TSharedPtr<FJsonValue>> *CmdArr = nullptr;
+          if (Result->TryGetArrayField(TEXT("availableCommands"), CmdArr) &&
+              CmdArr) {
+            ParseAvailableCommands(*CmdArr, AvailableCommands);
+          }
+        }
+        OnAgentSettingsChanged.Broadcast();
+
+        UE_LOG(LogUAgent, Log, TEXT("Session loaded: %s"), *SessionId);
+        SetState(EClientState::Ready);
+      });
+}
+
 void FACPClient::HandleNotification(const FString &Method,
                                     const TSharedPtr<FJsonObject> &Params) {
   if (Method == TEXT("session/update") && Params.IsValid()) {
     FSessionUpdate Update;
     if (FSessionUpdate::FromJson(Params.ToSharedRef(), Update)) {
-      // Mirror agent-driven config-option changes into our local snapshot
-      // before fanning the update out, so subscribers querying
-      // GetConfigOptions() during their handler see the post-change state.
-      const bool bSettingsChanged =
-          Update.Kind == FSessionUpdate::EKind::ConfigOptionUpdate;
-      if (bSettingsChanged) {
+      // Mirror agent-driven config-option / mode changes into our local
+      // snapshot before fanning the update out, so subscribers querying
+      // GetConfigOptions() / GetCurrentModeId() during their handler see the
+      // post-change state.
+      bool bSettingsChanged = false;
+      if (Update.Kind == FSessionUpdate::EKind::ConfigOptionUpdate) {
         ConfigOptions = Update.ConfigOptions;
+        bSettingsChanged = true;
+      } else if (Update.Kind == FSessionUpdate::EKind::CurrentModeUpdate &&
+                 !Update.CurrentModeId.IsEmpty() &&
+                 Update.CurrentModeId != CurrentModeId) {
+        CurrentModeId = Update.CurrentModeId;
+        bSettingsChanged = true;
+      } else if (Update.Kind ==
+                 FSessionUpdate::EKind::AvailableCommandsUpdate) {
+        AvailableCommands = Update.AvailableCommands;
+        bSettingsChanged = true;
+      } else if (Update.Kind == FSessionUpdate::EKind::Plan) {
+        // Per spec, each `plan` notification is a full replacement — store
+        // verbatim. Subscribers receive the same payload via OnSessionUpdate
+        // so this is mostly so a late-attaching consumer (e.g. a re-opened
+        // chat tab on a live session) can read the current plan without
+        // waiting for the next update.
+        CurrentPlan = Update.PlanEntries;
       }
 
       OnSessionUpdate.Broadcast(Update);
@@ -295,6 +519,39 @@ void FACPClient::SetConfigOption(const FString &ConfigId,
                        UE_LOG(LogUAgent, Warning,
                               TEXT("session/set_config_option failed: %s"),
                               *Msg);
+                     }
+                   });
+}
+
+void FACPClient::SetSessionMode(const FString &ModeId) {
+  if (SessionId.IsEmpty() || ModeId.IsEmpty())
+    return;
+  if (ModeId == CurrentModeId)
+    return;
+
+  const bool bAvailable = AvailableModes.ContainsByPredicate(
+      [&ModeId](const FSessionMode &M) { return M.Id == ModeId; });
+  if (!bAvailable) {
+    UE_LOG(LogUAgent, Warning,
+           TEXT("session/set_mode skipped: '%s' not in advertised set"),
+           *ModeId);
+    return;
+  }
+
+  CurrentModeId = ModeId;
+  OnAgentSettingsChanged.Broadcast();
+
+  TSharedRef<FJsonObject> Params = MakeShared<FJsonObject>();
+  Params->SetStringField(TEXT("sessionId"), SessionId);
+  Params->SetStringField(TEXT("modeId"), ModeId);
+  Peer.SendRequest(TEXT("session/set_mode"), Params,
+                   [](const TSharedPtr<FJsonObject> &,
+                      const TSharedPtr<FJsonObject> &Error) {
+                     if (Error.IsValid()) {
+                       FString Msg;
+                       Error->TryGetStringField(TEXT("message"), Msg);
+                       UE_LOG(LogUAgent, Warning,
+                              TEXT("session/set_mode failed: %s"), *Msg);
                      }
                    });
 }

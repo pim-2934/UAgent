@@ -5,6 +5,7 @@
 #include "Misc/ScopeLock.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UAgentSettings.h"
 
 namespace UAgent {
 FACPTransport::FACPTransport() = default;
@@ -168,7 +169,17 @@ bool FACPTransport::Send(const TSharedRef<FJsonObject> &Message) {
       StdinWriteParent, Bytes.GetData(), Bytes.Num(), &BytesWritten);
   UE_CLOG(!bOk, LogUAgent, Error,
           TEXT("FACPTransport::Send: WritePipe returned false"));
-  UE_CLOG(bOk, LogUAgent, VeryVerbose, TEXT(">> %s"), *Serialized);
+  if (bOk) {
+    // When the user has opted into raw protocol logging (Project Settings →
+    // Plugins → UAgent → Log Agent JSON), promote send traces from
+    // VeryVerbose to Log so they appear in the default Output Log without a
+    // verbosity override. Otherwise keep the original VeryVerbose channel.
+    if (GetDefault<UUAgentSettings>()->bLogAgentJson) {
+      UE_LOG(LogUAgent, Log, TEXT(">> %s"), *Serialized);
+    } else {
+      UE_LOG(LogUAgent, VeryVerbose, TEXT(">> %s"), *Serialized);
+    }
+  }
   return bOk;
 }
 
@@ -219,6 +230,13 @@ uint32 FACPTransport::Run() {
           Chunk.Num() > 0) {
         StdoutBuffer.Append(Chunk);
         SplitLines(StdoutBuffer, [this](const FString &Line) {
+          // Settings read on the worker thread: GetDefault<>() returns the
+          // CDO (constructed once at module load), and bLogAgentJson is a
+          // plain bool — racy reads at worst miss a toggle by one message,
+          // which is acceptable for a debug switch.
+          if (GetDefault<UUAgentSettings>()->bLogAgentJson) {
+            UE_LOG(LogUAgent, Log, TEXT("<< %s"), *Line);
+          }
           TSharedPtr<FJsonObject> Parsed;
           const TSharedRef<TJsonReader<>> Reader =
               TJsonReaderFactory<>::Create(Line);

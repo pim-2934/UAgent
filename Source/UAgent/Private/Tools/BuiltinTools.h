@@ -45,6 +45,10 @@ TSharedRef<IACPTool> CreateSetComponentPropertyTool();
 TSharedRef<IACPTool> CreateSetComponentMaterialTool();
 TSharedRef<IACPTool> CreateGetComponentPropertiesTool();
 TSharedRef<IACPTool> CreateAddInterfaceTool();
+TSharedRef<IACPTool> CreateAddWidgetTool();
+TSharedRef<IACPTool> CreateSetWidgetPropertyTool();
+TSharedRef<IACPTool> CreateSetWidgetSlotPropertyTool();
+TSharedRef<IACPTool> CreateBindComponentDelegateTool();
 
 // Asset (phases 1/3/6).
 TSharedRef<IACPTool> CreateListAssetsTool();
@@ -96,4 +100,8 @@ TSharedRef<IACPTool> CreateSetWorldSettingsTool();
 // Config (phase 6).
 TSharedRef<IACPTool> CreateReadConfigTool();
 TSharedRef<IACPTool> CreateWriteConfigTool();
+
+// Developer (gated on bDeveloperMode + writable plugin Source dir; see
+// Tools/Common/DeveloperGate.h).
+TSharedRef<IACPTool> CreateProposeMissingToolTool();
 } // namespace UAgent

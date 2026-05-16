@@ -163,6 +163,138 @@ void ParseConfigOptions(const TArray<TSharedPtr<FJsonValue>> &In,
   }
 }
 
+bool FSessionMode::FromJson(const TSharedRef<FJsonObject> &Obj,
+                            FSessionMode &Out) {
+  if (!Obj->TryGetStringField(TEXT("id"), Out.Id) || Out.Id.IsEmpty()) {
+    return false;
+  }
+  Obj->TryGetStringField(TEXT("name"), Out.Name);
+  Obj->TryGetStringField(TEXT("description"), Out.Description);
+  return true;
+}
+
+bool FAvailableCommand::FromJson(const TSharedRef<FJsonObject> &Obj,
+                                 FAvailableCommand &Out) {
+  if (!Obj->TryGetStringField(TEXT("name"), Out.Name) || Out.Name.IsEmpty()) {
+    return false;
+  }
+  Obj->TryGetStringField(TEXT("description"), Out.Description);
+  const TSharedPtr<FJsonObject> *InputObj = nullptr;
+  if (Obj->TryGetObjectField(TEXT("input"), InputObj) && InputObj &&
+      InputObj->IsValid()) {
+    (*InputObj)->TryGetStringField(TEXT("hint"), Out.InputHint);
+  }
+  return true;
+}
+
+void ParseAvailableCommands(const TArray<TSharedPtr<FJsonValue>> &In,
+                            TArray<FAvailableCommand> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FAvailableCommand Cmd;
+    if (FAvailableCommand::FromJson(Obj->ToSharedRef(), Cmd)) {
+      Out.Add(MoveTemp(Cmd));
+    }
+  }
+}
+
+bool FSessionInfo::FromJson(const TSharedRef<FJsonObject> &Obj,
+                            FSessionInfo &Out) {
+  if (!Obj->TryGetStringField(TEXT("sessionId"), Out.SessionId) ||
+      Out.SessionId.IsEmpty()) {
+    return false;
+  }
+  Obj->TryGetStringField(TEXT("cwd"), Out.Cwd);
+  Obj->TryGetStringField(TEXT("title"), Out.Title);
+  Obj->TryGetStringField(TEXT("updatedAt"), Out.UpdatedAt);
+  return true;
+}
+
+void ParseSessionInfos(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionInfo> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FSessionInfo Info;
+    if (FSessionInfo::FromJson(Obj->ToSharedRef(), Info)) {
+      Out.Add(MoveTemp(Info));
+    }
+  }
+}
+
+void ParseSessionModes(const TArray<TSharedPtr<FJsonValue>> &In,
+                       TArray<FSessionMode> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FSessionMode Mode;
+    if (FSessionMode::FromJson(Obj->ToSharedRef(), Mode)) {
+      Out.Add(MoveTemp(Mode));
+    }
+  }
+}
+
+EPlanEntryStatus ParsePlanEntryStatus(const FString &In) {
+  if (In == TEXT("pending"))
+    return EPlanEntryStatus::Pending;
+  if (In == TEXT("in_progress"))
+    return EPlanEntryStatus::InProgress;
+  if (In == TEXT("completed"))
+    return EPlanEntryStatus::Completed;
+  return EPlanEntryStatus::Unknown;
+}
+
+EPlanEntryPriority ParsePlanEntryPriority(const FString &In) {
+  if (In == TEXT("low"))
+    return EPlanEntryPriority::Low;
+  if (In == TEXT("medium"))
+    return EPlanEntryPriority::Medium;
+  if (In == TEXT("high"))
+    return EPlanEntryPriority::High;
+  return EPlanEntryPriority::Unknown;
+}
+
+bool FPlanEntry::FromJson(const TSharedRef<FJsonObject> &Obj, FPlanEntry &Out) {
+  if (!Obj->TryGetStringField(TEXT("content"), Out.Content) ||
+      Out.Content.IsEmpty()) {
+    return false;
+  }
+  FString StatusStr;
+  if (Obj->TryGetStringField(TEXT("status"), StatusStr)) {
+    Out.Status = ParsePlanEntryStatus(StatusStr);
+  }
+  FString PriorityStr;
+  if (Obj->TryGetStringField(TEXT("priority"), PriorityStr)) {
+    Out.Priority = ParsePlanEntryPriority(PriorityStr);
+  }
+  return true;
+}
+
+void ParsePlanEntries(const TArray<TSharedPtr<FJsonValue>> &In,
+                      TArray<FPlanEntry> &Out) {
+  Out.Reset();
+  Out.Reserve(In.Num());
+  for (const TSharedPtr<FJsonValue> &V : In) {
+    const TSharedPtr<FJsonObject> *Obj = nullptr;
+    if (!V->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+      continue;
+    FPlanEntry Entry;
+    if (FPlanEntry::FromJson(Obj->ToSharedRef(), Entry)) {
+      Out.Add(MoveTemp(Entry));
+    }
+  }
+}
+
 EStopReason ParseStopReason(const FString &In) {
   if (In == TEXT("end_turn"))
     return EStopReason::EndTurn;
@@ -272,14 +404,30 @@ bool FSessionUpdate::FromJson(const TSharedRef<FJsonObject> &Params,
 
   if (Kind == TEXT("plan")) {
     Out.Kind = EKind::Plan;
+    const TArray<TSharedPtr<FJsonValue>> *Arr = nullptr;
+    if ((*UpdateObj)->TryGetArrayField(TEXT("entries"), Arr) && Arr) {
+      ParsePlanEntries(*Arr, Out.PlanEntries);
+    }
     return true;
   }
   if (Kind == TEXT("available_commands_update")) {
     Out.Kind = EKind::AvailableCommandsUpdate;
+    const TArray<TSharedPtr<FJsonValue>> *Arr = nullptr;
+    if ((*UpdateObj)->TryGetArrayField(TEXT("availableCommands"), Arr) && Arr) {
+      ParseAvailableCommands(*Arr, Out.AvailableCommands);
+    }
     return true;
   }
   if (Kind == TEXT("current_mode_update")) {
     Out.Kind = EKind::CurrentModeUpdate;
+    // The spec uses camelCase ("currentModeId") but older Claude CLI builds
+    // emitted snake_case ("current_mode_id"). Try both so we work across
+    // adapter versions.
+    if (!(*UpdateObj)
+             ->TryGetStringField(TEXT("currentModeId"), Out.CurrentModeId)) {
+      (*UpdateObj)
+          ->TryGetStringField(TEXT("current_mode_id"), Out.CurrentModeId);
+    }
     return true;
   }
   if (Kind == TEXT("config_option_update")) {
@@ -287,6 +435,26 @@ bool FSessionUpdate::FromJson(const TSharedRef<FJsonObject> &Params,
     const TArray<TSharedPtr<FJsonValue>> *Arr = nullptr;
     if ((*UpdateObj)->TryGetArrayField(TEXT("configOptions"), Arr) && Arr) {
       ParseConfigOptions(*Arr, Out.ConfigOptions);
+    }
+    return true;
+  }
+  if (Kind == TEXT("usage_update")) {
+    Out.Kind = EKind::UsageUpdate;
+    double UsedD = 0.0;
+    if ((*UpdateObj)->TryGetNumberField(TEXT("used"), UsedD)) {
+      Out.UsageUsed = static_cast<int64>(UsedD);
+    }
+    double SizeD = 0.0;
+    if ((*UpdateObj)->TryGetNumberField(TEXT("size"), SizeD)) {
+      Out.UsageSize = static_cast<int64>(SizeD);
+    }
+    const TSharedPtr<FJsonObject> *CostObj = nullptr;
+    if ((*UpdateObj)->TryGetObjectField(TEXT("cost"), CostObj) && CostObj &&
+        CostObj->IsValid()) {
+      if ((*CostObj)->TryGetNumberField(TEXT("amount"), Out.CostAmount)) {
+        Out.bHasCost = true;
+      }
+      (*CostObj)->TryGetStringField(TEXT("currency"), Out.CostCurrency);
     }
     return true;
   }

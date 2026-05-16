@@ -9,7 +9,6 @@
 #include "EditorAssetLibrary.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SCS_Node.h"
-#include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -22,17 +21,6 @@
 
 namespace UAgent {
 namespace {
-USCS_Node *FindScsNodeByName(USimpleConstructionScript *SCS,
-                             const FName &Name) {
-  if (!SCS)
-    return nullptr;
-  for (USCS_Node *N : SCS->GetAllNodes()) {
-    if (N && N->GetVariableName() == Name)
-      return N;
-  }
-  return nullptr;
-}
-
 AActor *FindActorByAny(const FString &NameOrLabel) {
   UEditorActorSubsystem *Sub =
       GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
@@ -75,22 +63,26 @@ public:
   virtual FString GetDescription() const override {
     return TEXT(
         "Set a property on a component. Two modes: on a Blueprint "
-        "(blueprintPath + componentName → writes the SCS node's "
-        "component_template, recompiles, and by default updates already-placed "
-        "actors that were inheriting the prior value) or on a placed actor "
-        "(actor + componentName → writes the live component instance on that "
-        "actor, bypassing the Blueprint). Use the live-instance mode to tweak "
-        "one actor without affecting siblings spawned from the same Blueprint. "
-        "Value is the FProperty ImportText form.");
+        "(blueprintPath + componentName → writes the SCS component template, "
+        "or the GeneratedClass CDO for inherited C++ default subobjects, or — "
+        "when the component lives on an ancestor BP's SCS — gets-or-creates "
+        "an InheritableComponentHandler override on this BP and writes that, "
+        "scoping the change to this BP and its descendants; recompiles and by "
+        "default updates already-placed actors that were inheriting the prior "
+        "value) or on a placed actor (actor + componentName → writes the live "
+        "component instance on that actor, bypassing the Blueprint). Use the "
+        "live-instance mode to tweak one actor without affecting siblings "
+        "spawned from the same Blueprint. Value is the FProperty ImportText "
+        "form.");
   }
 
   virtual TSharedPtr<FJsonObject> GetInputSchema() const override {
     return ParseJsonObject(LR"JSON({
 						"type": "object",
 						"properties": {
-							"blueprintPath": { "type": "string", "description": "Blueprint asset path. Use with componentName to write an SCS component template." },
+							"blueprintPath": { "type": "string", "description": "Blueprint asset path. Use with componentName to write a component template (SCS) or inherited C++ default subobject (CDO)." },
 							"actor":         { "type": "string", "description": "Placed actor name or label. Use with componentName to write a live component instance." },
-							"componentName": { "type": "string", "description": "SCS node variable name, or component instance name, e.g. 'CubeMesh'" },
+							"componentName": { "type": "string", "description": "Component variable name. Matches an SCS node, or an inherited C++ component declared via CreateDefaultSubobject (e.g. 'EquipmentComponent')." },
 							"propertyName": { "type": "string", "description": "Property on the component, e.g. 'StaticMesh'" },
 							"value": { "type": "string", "description": "ImportText form (object paths like /Engine/BasicShapes/Cube.Cube are accepted for UObject properties)" },
 							"saveAsset": { "type": "boolean", "description": "Blueprint mode only: save the asset after compile. Default true." },
@@ -165,27 +157,32 @@ public:
     UBlueprint *BP = BlueprintAccess::LoadBlueprintByPath(BPPath, Err);
     if (!BP)
       return FToolResponse::Fail(-32000, Err);
-    if (!BP->SimpleConstructionScript) {
+
+    BlueprintAccess::FResolvedBlueprintComponent Resolved =
+        BlueprintAccess::ResolveBlueprintComponent(BP, CompName);
+    if (!Resolved.Component) {
       return FToolResponse::Fail(
           -32000,
-          TEXT("Blueprint has no SimpleConstructionScript (not an Actor?)"));
-    }
-
-    USCS_Node *Node =
-        FindScsNodeByName(BP->SimpleConstructionScript, FName(*CompName));
-    if (!Node) {
-      return FToolResponse::Fail(
-          -32000, FString::Printf(TEXT("SCS component '%s' not found on BP "
-                                       "(inherited components not supported)"),
-                                  *CompName));
-    }
-
-    UActorComponent *Template = Node->ComponentTemplate;
-    if (!Template) {
-      return FToolResponse::Fail(
-          -32000,
-          FString::Printf(TEXT("SCS node '%s' has no ComponentTemplate"),
+          FString::Printf(TEXT("component '%s' not found on BP (checked SCS, "
+                               "ancestor-BP SCS, and inherited C++ "
+                               "subobjects)"),
                           *CompName));
+    }
+
+    const FScopedTransaction Tx(
+        LOCTEXT("SetComponentPropTx", "Set Component Property"));
+    BP->Modify();
+
+    // InheritedSCS: promote to a child ICH override before mutation so the
+    // write is scoped to this BP and its descendants instead of leaking up
+    // into the parent BP's template (which would affect every sibling
+    // subclass).
+    FString WriteErr;
+    UActorComponent *Template =
+        BlueprintAccess::EnsureWritableComponentTemplate(BP, Resolved,
+                                                         WriteErr);
+    if (!Template) {
+      return FToolResponse::Fail(-32000, WriteErr);
     }
 
     FProperty *Prop =
@@ -196,10 +193,15 @@ public:
                                   *PropName, *Template->GetClass()->GetName()));
     }
 
-    const FScopedTransaction Tx(
-        LOCTEXT("SetComponentPropTx", "Set Component Property"));
-    BP->Modify();
-    Node->Modify();
+    // SCS path dirties the node; C++ DSO path dirties the CDO; InheritedSCS
+    // path's owner is the BPGC's ICH (reached transitively through BP/Modify
+    // already called above). All flow into the BP's transactional save chain.
+    if (Resolved.Source == BlueprintAccess::EBlueprintComponentSource::SCS &&
+        Resolved.Node) {
+      Resolved.Node->Modify();
+    } else if (Resolved.CDO) {
+      Resolved.CDO->Modify();
+    }
     Template->Modify();
 
     void *TemplateAddr = Prop->ContainerPtrToValuePtr<void>(Template);

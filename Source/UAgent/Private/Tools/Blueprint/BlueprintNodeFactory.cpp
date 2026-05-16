@@ -3,11 +3,16 @@
 #include "EdGraph/EdGraph.h"
 #include "Engine/Blueprint.h"
 #include "K2Node.h"
+#include "K2Node_AddDelegate.h"
+#include "K2Node_BaseMCDelegate.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_ClearDelegate.h"
 #include "K2Node_Event.h"
+#include "K2Node_RemoveDelegate.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "UObject/UObjectGlobals.h"
+#include "UObject/UnrealType.h"
 
 namespace UAgent::BlueprintAccess {
 namespace {
@@ -76,6 +81,49 @@ UK2Node *SpawnEvent(UEdGraph *Graph, UBlueprint *BP, const FString &Payload,
   return Event;
 }
 
+template <typename TDelegateNode>
+UK2Node *SpawnDelegateNode(UEdGraph *Graph, UBlueprint *BP,
+                           const FString &Payload, FString &OutError) {
+  // Two accepted forms, mirroring `event:` (parent-class) and `function:`
+  // (explicit class.member):
+  //   "DelegateName"                          → resolved on BP->ParentClass
+  //   "/Script/Module.Class.DelegateName"     → explicit owning class
+  UClass *OwnerClass = nullptr;
+  FString DelegateName;
+  FString ClassPath;
+  if (Payload.Split(TEXT("."), &ClassPath, &DelegateName,
+                    ESearchCase::CaseSensitive, ESearchDir::FromEnd) &&
+      !ClassPath.IsEmpty() && !DelegateName.IsEmpty()) {
+    OwnerClass = FindObject<UClass>(nullptr, *ClassPath);
+    if (!OwnerClass) {
+      OutError = FString::Printf(TEXT("class '%s' not found"), *ClassPath);
+      return nullptr;
+    }
+  } else {
+    DelegateName = Payload;
+    OwnerClass = BP->ParentClass;
+    if (!OwnerClass) {
+      OutError = TEXT("Blueprint has no parent class to resolve delegate on");
+      return nullptr;
+    }
+  }
+
+  FMulticastDelegateProperty *Prop = FindFProperty<FMulticastDelegateProperty>(
+      OwnerClass, FName(*DelegateName));
+  if (!Prop) {
+    OutError = FString::Printf(
+        TEXT("multicast delegate property '%s' not found on class '%s'"),
+        *DelegateName, *OwnerClass->GetName());
+    return nullptr;
+  }
+
+  TDelegateNode *Node = NewObject<TDelegateNode>(Graph);
+  Node->SetFromProperty(Prop, /*bSelfContext=*/true, OwnerClass);
+  Graph->AddNode(Node, /*bFromUI=*/false, /*bSelectNewNode=*/false);
+  FinalizeNode(Node);
+  return Node;
+}
+
 UK2Node *SpawnRawK2Node(UEdGraph *Graph, UBlueprint *, const FString &Payload,
                         FString &OutError) {
   UClass *Cls = FindObject<UClass>(nullptr, *Payload);
@@ -98,6 +146,11 @@ TMap<FString, FNodeSpawner> &GetSpawnerMap() {
     Initial.Add(TEXT("variable-get"), &SpawnVariableGet);
     Initial.Add(TEXT("variable-set"), &SpawnVariableSet);
     Initial.Add(TEXT("event"), &SpawnEvent);
+    Initial.Add(TEXT("add-delegate"), &SpawnDelegateNode<UK2Node_AddDelegate>);
+    Initial.Add(TEXT("remove-delegate"),
+                &SpawnDelegateNode<UK2Node_RemoveDelegate>);
+    Initial.Add(TEXT("clear-delegate"),
+                &SpawnDelegateNode<UK2Node_ClearDelegate>);
     Initial.Add(TEXT("node"), &SpawnRawK2Node);
     return Initial;
   }();

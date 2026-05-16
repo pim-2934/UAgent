@@ -3,7 +3,6 @@
 #include "../BuiltinTools.h"
 #include "PermissionBroker.h"
 #include "UAgent.h"
-#include "UAgentSettings.h"
 
 #include "Modules/ModuleManager.h"
 
@@ -135,12 +134,16 @@ ResolveOutcome(FString ChosenId,
 }
 
 /**
- * Routes session/request_permission through the chat window's mode dropdown:
- *   FullAccess — always allow
- *   ReadOnly   — allow only non-mutating tool kinds (read/search/think/fetch)
- *   Default    — auto-allow read-only kinds; for everything else, ask the
- *                user via the chat window's permission card and defer the
- *                response until they click Accept or Cancel
+ * Routes session/request_permission to the chat window's permission card.
+ * Read-only kinds (read/search/think/fetch, or MCP tools whose registry entry
+ * reports IsReadOnly) skip the prompt to avoid nagging — anything else defers
+ * to the user, who clicks Accept or Cancel on a chat row.
+ *
+ * Note: with agent-broadcast session modes (session/set_mode), the agent
+ * itself decides whether to *ask* — Claude's "acceptEdits" /
+ * "bypassPermissions" modes simply don't call request_permission for those
+ * classes. That gating moved out of this tool; what's left here is the local
+ * "skip nagging on reads" optimization and the user-prompt fallback.
  *
  * The returned optionId MUST be one the agent actually offered in options[];
  * echoing a hardcoded value causes the agent to treat the response as refused.
@@ -191,81 +194,48 @@ public:
     const bool bIsReadOnly =
         IsReadOnlyToolKind(ToolKind) || IsRegistryToolReadOnly(McpName);
 
-    const EACPPermissionMode Mode = PermissionModeStore::Load();
-
-    switch (Mode) {
-    case EACPPermissionMode::ReadOnly: {
-      const FString ChosenId =
-          bIsReadOnly ? PickAllowId(Options) : PickRejectId(Options);
-      UE_LOG(LogUAgent, Verbose,
-             TEXT("request_permission: kind='%s' name='%s' ReadOnly→%s "
-                  "optionId='%s'"),
-             *ToolKind, *McpName, bIsReadOnly ? TEXT("allow") : TEXT("reject"),
-             *ChosenId);
-      Complete(ResolveOutcome(ChosenId, Options));
-      return;
-    }
-
-    case EACPPermissionMode::Default: {
-      // Read-only tools skip the prompt — Default is about gating mutations,
-      // not nagging on every list/read.
-      if (bIsReadOnly) {
-        const FString ChosenId = PickAllowId(Options);
-        UE_LOG(
-            LogUAgent, Verbose,
-            TEXT("request_permission: kind='%s' name='%s' Default→auto-allow "
-                 "(read-only) optionId='%s'"),
-            *ToolKind, *McpName, *ChosenId);
-        Complete(ResolveOutcome(ChosenId, Options));
-        return;
-      }
-
-      // Mutating tool — defer to the user. PermissionBroker bridges to the
-      // chat window; if no UI is installed it auto-denies, which we map to
-      // PickRejectId so the agent gets a valid optionId back.
-      FString FallbackTitle = ToolTitle;
-      if (FallbackTitle.IsEmpty()) {
-        FString MethodHint;
-        if (ToolCallCopy.IsValid())
-          ToolCallCopy->TryGetStringField(TEXT("title"), MethodHint);
-        FallbackTitle = MethodHint.IsEmpty() ? TEXT("(tool)") : MethodHint;
-      }
-
-      FPermissionRequest Req;
-      if (ToolCallCopy.IsValid())
-        ToolCallCopy->TryGetStringField(TEXT("toolCallId"), Req.ToolCallId);
-      Req.ToolTitle = FallbackTitle;
-      Req.ToolKind = ToolKind;
-      Req.RawToolCall = ToolCallCopy;
-
-      // Capture Options + Complete by value into the callback. The broker
-      // fires it from the game thread once the user clicks.
-      FPermissionBroker::Get().Request(
-          Req, [Options, Complete = MoveTemp(Complete),
-                ToolKind](EPermissionOutcome Outcome) mutable {
-            const bool bAllow = (Outcome == EPermissionOutcome::Allow);
-            const FString ChosenId =
-                bAllow ? PickAllowId(Options) : PickRejectId(Options);
-            UE_LOG(LogUAgent, Verbose,
-                   TEXT("request_permission: toolKind='%s' Default→user-%s "
-                        "optionId='%s'"),
-                   *ToolKind, bAllow ? TEXT("allow") : TEXT("deny"), *ChosenId);
-            Complete(ResolveOutcome(ChosenId, Options));
-          });
-      return;
-    }
-
-    case EACPPermissionMode::FullAccess:
-    default: {
+    if (bIsReadOnly) {
       const FString ChosenId = PickAllowId(Options);
       UE_LOG(LogUAgent, Verbose,
-             TEXT("request_permission: toolKind='%s' FullAccess→allow "
-                  "optionId='%s'"),
-             *ToolKind, *ChosenId);
+             TEXT("request_permission: kind='%s' name='%s' auto-allow "
+                  "(read-only) optionId='%s'"),
+             *ToolKind, *McpName, *ChosenId);
       Complete(ResolveOutcome(ChosenId, Options));
       return;
     }
+
+    // Mutating tool — defer to the user. PermissionBroker bridges to the
+    // chat window; if no UI is installed it auto-denies, which we map to
+    // PickRejectId so the agent gets a valid optionId back.
+    FString FallbackTitle = ToolTitle;
+    if (FallbackTitle.IsEmpty()) {
+      FString MethodHint;
+      if (ToolCallCopy.IsValid())
+        ToolCallCopy->TryGetStringField(TEXT("title"), MethodHint);
+      FallbackTitle = MethodHint.IsEmpty() ? TEXT("(tool)") : MethodHint;
     }
+
+    FPermissionRequest Req;
+    if (ToolCallCopy.IsValid())
+      ToolCallCopy->TryGetStringField(TEXT("toolCallId"), Req.ToolCallId);
+    Req.ToolTitle = FallbackTitle;
+    Req.ToolKind = ToolKind;
+    Req.RawToolCall = ToolCallCopy;
+
+    // Capture Options + Complete by value into the callback. The broker
+    // fires it from the game thread once the user clicks.
+    FPermissionBroker::Get().Request(
+        Req, [Options, Complete = MoveTemp(Complete),
+              ToolKind](EPermissionOutcome Outcome) mutable {
+          const bool bAllow = (Outcome == EPermissionOutcome::Allow);
+          const FString ChosenId =
+              bAllow ? PickAllowId(Options) : PickRejectId(Options);
+          UE_LOG(
+              LogUAgent, Verbose,
+              TEXT("request_permission: toolKind='%s' user-%s optionId='%s'"),
+              *ToolKind, bAllow ? TEXT("allow") : TEXT("deny"), *ChosenId);
+          Complete(ResolveOutcome(ChosenId, Options));
+        });
   }
 };
 } // namespace

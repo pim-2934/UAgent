@@ -25,6 +25,7 @@ void FUAgentModule::StartupModule() {
   // during startup.
   if (GLog)
     GLog->AddOutputDevice(&UAgent::FEditorLogSink::Get());
+  UAgent::FEditorLogSink::Get().BindPieDelegates();
 
   ToolRegistry = MakeShared<UAgent::FACPToolRegistry>();
   UAgent::RegisterBuiltinTools(*ToolRegistry);
@@ -86,6 +87,7 @@ void FUAgentModule::ShutdownModule() {
   AssetContextRegistry.Reset();
   ToolRegistry.Reset();
 
+  UAgent::FEditorLogSink::Get().UnbindPieDelegates();
   if (GLog)
     GLog->RemoveOutputDevice(&UAgent::FEditorLogSink::Get());
 }
