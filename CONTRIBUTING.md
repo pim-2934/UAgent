@@ -99,22 +99,25 @@ virtual bool IsReadOnly() const override { return false; }
 Pure-virtual: every tool must classify itself. See `CreateBlueprintTool.cpp` (mutating) and `ListAssetsTool.cpp` (read-only) for the pattern.
 
 What this drives:
-- **Permission gating.** `RequestPermissionTool` looks the tool up by name in the registry and consults `IsReadOnly()`. Read Only auto-allows read tools / auto-rejects mutating ones; Default auto-allows reads and prompts the user via the chat permission card on mutations.
+- **Permission gating.** `RequestPermissionTool` auto-allows read-only tools (so the agent doesn't nag for queries) and defers mutating tools to the user via the chat permission card. Whether the agent asks at all is controlled by its own advertised **session mode** (`session/set_mode` — see [Session modes](#session-modes-and-the-mode-dropdown) below): Claude's *acceptEdits* and *bypassPermissions* skip the call entirely; Codex's *full-access* does the same. There is no UAgent-side override that forces auto-deny or auto-allow regardless of mode — choose the agent's mode to change behavior.
 - **MCP `annotations.readOnlyHint`.** `FMCPServer` emits this in `tools/list` for read-only tools so any spec-respecting external MCP client (Claude Desktop, Cursor, Zed) can also classify them. `claude-agent-acp` itself currently ignores annotations, so the in-process registry lookup is what actually gates the chat tab.
 
 If a tool only ever changes ephemeral editor UI state (focus, opening a window) and never touches saved data, it counts as read-only — see `OpenAssetTool` and `FocusInContentBrowserTool` for the precedent. Anything that writes a file, dirties an asset, edits a property, or modifies a level counts as mutating — including writing scratch artifacts under `Saved/` (e.g. `capture_viewport`'s PNG output).
 
-#### Runtime: how a request gets answered
+#### Session modes and the mode dropdown
 
-`session/request_permission` is handled by `FRequestPermissionTool` (in `Tools/Session/`), which reads the chat window's selected mode and the tool's `IsReadOnly()` and decides:
+The **Mode:** dropdown at the bottom of the chat is **purely agent-advertised**: its entries come from the `modes` array in the agent's `session/new` response (Claude exposes *default* / *acceptEdits* / *plan* / *bypassPermissions*; Codex exposes *read-only* / *default* / *full-access*; other agents advertise whatever they want). Picking an entry sends `session/set_mode`; subsequent `current_mode_update` notifications keep the UI in sync. UAgent does not interpret mode IDs or impose its own gating layer on top — the agent itself decides whether to call `request_permission` based on the active mode.
 
-- **Full Access** — always picks `allow_once` (or `allow_always` as fallback) from the agent's `options[]` and returns synchronously.
-- **Read Only** — picks `allow_once` for read-only tools, `reject_once` otherwise. Synchronous.
-- **Default** — read-only tools auto-allow; mutating tools defer via `FPermissionBroker::Get().Request(...)`. The broker hands the request to the chat window, which appends a permission card to the transcript and stores the completion callback. When the user clicks Accept/Cancel, the chat resolves the callback and the tool's `ExecuteAsync` continuation echoes the matching `optionId` back to the agent.
+#### Runtime: how a permission request gets answered
 
-Because `Default` mode has to wait on user input, `IACPTool::ExecuteAsync` exists alongside `Execute` — its default implementation just forwards to `Execute` synchronously, but tools that need to defer override it. `FACPClient::HandleRequest` always dispatches via `ExecuteAsync` and captures the tool by shared-ref so it survives the deferral.
+`session/request_permission` is handled by `FRequestPermissionTool` (in `Tools/Session/`), which classifies the incoming call and decides:
 
-The MCP-tool kind heuristic in `FRequestPermissionTool` (looking up the `_ue5/<name>` tool in the registry by name) only matters because `claude-agent-acp` 0.31.0 always tags MCP tools `kind="other"`. Any spec-respecting agent that reads our `annotations.readOnlyHint` and emits a real `kind` will be classified by `kind` directly without the registry round-trip.
+- **Read-only call** — auto-allow synchronously. The classification combines the ACP `toolCall.kind` (`read` / `search` / `think` / `fetch`) with an `IsReadOnly()` lookup against the in-process registry keyed by the MCP tool name (parsed from the `mcp__<server>__<name>` `toolCall.title`). The tool returns `allow_once` (or `allow_always` as fallback) from the agent's `options[]`.
+- **Mutating call** — defer via `FPermissionBroker::Get().Request(...)`. The broker hands the request to the chat window, which appends a permission card to the transcript and stores the completion callback. When the user clicks Accept/Cancel, the chat resolves the callback and the tool's `ExecuteAsync` continuation echoes the matching `optionId` (`allow_once` / `reject_once`) back to the agent.
+
+Because the mutating path has to wait on user input, `IACPTool::ExecuteAsync` exists alongside `Execute` — its default implementation just forwards to `Execute` synchronously, but tools that need to defer override it. `FACPClient::HandleRequest` always dispatches via `ExecuteAsync` and captures the tool by shared-ref so it survives the deferral.
+
+The registry round-trip is necessary because `claude-agent-acp` 0.31.0 always tags MCP tools `kind="other"` (its `toolInfoFromToolUse` only classifies Claude's built-in tools). Any spec-respecting agent that reads our `annotations.readOnlyHint` and emits a real `kind` will be classified by `kind` directly without the registry lookup.
 
 ### Shared helpers (`UAgent::Common`, in `Private/Tools/Common/`)
 

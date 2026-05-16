@@ -2,7 +2,7 @@
 
 Every tool is exposed over both ACP (as `_ue5/<name>`) and MCP (as `<name>`), backed by a single `IACPTool` implementation in the editor. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add one.
 
-Each tool classifies itself as read-only or mutating. The chat window's permission dropdown uses this classification: **Read Only** mode rejects mutating tools, **Default** mode auto-allows reads and prompts on mutations, **Full Access** allows everything. The MCP server also emits the spec's `annotations.readOnlyHint` for read-only tools so external MCP clients can classify them correctly. See [Permission classification](CONTRIBUTING.md#permission-classification) in CONTRIBUTING.md.
+Each tool classifies itself as read-only or mutating. When the agent asks for permission, read-only tools auto-allow and mutating tools surface an inline **Accept / Cancel** card in the chat. The MCP server also emits the spec's `annotations.readOnlyHint` for read-only tools so external MCP clients (Claude Desktop, Cursor, Zed) can classify them correctly. Agent-side session modes (Claude's *acceptEdits* / *bypassPermissions*, Codex's *full-access*) decide whether the agent calls `session/request_permission` at all — see [Permission classification](CONTRIBUTING.md#permission-classification) in CONTRIBUTING.md.
 
 ## Filesystem
 
@@ -11,7 +11,7 @@ Each tool classifies itself as read-only or mutating. The chat window's permissi
 
 ## Session
 
-- **session/request_permission** — Answered based on the **Mode** dropdown at the bottom of the chat window. *Full Access* always allows; *Read Only* allows reads and rejects mutations; *Default* auto-allows reads and surfaces a permission card with **Accept / Cancel** for mutations.
+- **session/request_permission** — Auto-allows read-only tools (ACP `kind` of `read` / `search` / `think` / `fetch`, or MCP tools whose registry entry reports `IsReadOnly()`); mutating tools defer to the user via an inline **Accept / Cancel** permission card. The agent's own session mode (Claude's *acceptEdits* / *bypassPermissions*, Codex's *full-access*, etc.) controls whether it asks in the first place.
 
 ## Blueprints
 
