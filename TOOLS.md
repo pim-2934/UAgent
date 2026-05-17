@@ -96,7 +96,7 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 
 ## Skills
 
-- **invoke_skill** — Load the full body of a named UAgent skill — opinionated markdown guides for UE5 subsystems (GAS, Replication, Enhanced Input). The available skills are listed in the system context block prepended to each session's first prompt; this tool returns `{name, description, body}`. Plugin-shipped skills live in `Resources/Skills/*.md` and cover core UE5 only; per-project skills under `<ProjectDir>/UAgent/Skills/*.md` extend with third-party-framework or in-house guides (and can override shipped skills by name). See [Adding a skill](CONTRIBUTING.md#adding-a-skill) in CONTRIBUTING.md.
+- **invoke_skill** — Load the full body of a named UAgent skill — opinionated markdown guides for UE5 subsystems (GAS, Replication, Enhanced Input) or project-specific topics. The available skills are listed in the system context block prepended to each session's first prompt. Default call (`{name}`) returns `{name, description, body, resources[], fromProject}`; for directory-based skills, `resources[]` enumerates sibling files (manifest, references, …) under the skill directory. Pass `{name, resource: "<rel-path>"}` to load one of those files instead, returning `{name, description, resource, content, fromProject}`. Plugin-shipped skills live in `Resources/Skills/` (flat `.md` or `<name>/SKILL.md` directories) and cover core UE5 only; per-project skills under `<ProjectDir>/UAgent/Skills/` extend with third-party-framework or in-house guides (and can override shipped skills by name). See [Adding a skill](CONTRIBUTING.md#adding-a-skill) in CONTRIBUTING.md.
 
 ## Developer (gated)
 

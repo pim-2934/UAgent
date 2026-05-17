@@ -196,8 +196,10 @@ A skill that's a thin alias for one tool is dead weight. A tool that has to enum
 ### File locations
 
 ```
-<plugin root>/Resources/Skills/*.md       # ships with UAgent — read-only at runtime
-<ProjectDir>/UAgent/Skills/*.md           # per-project; overrides + adds
+<plugin root>/Resources/Skills/<flat>.md            # plugin-shipped (flat)
+<plugin root>/Resources/Skills/<name>/SKILL.md      # plugin-shipped (directory)
+<ProjectDir>/UAgent/Skills/<flat>.md                # per-project (flat)
+<ProjectDir>/UAgent/Skills/<name>/SKILL.md          # per-project (directory)
 ```
 
 Both directories are scanned at session start. **Project skills with the same `name` as a plugin skill override the plugin entry** (an info-level log records the override). Different names merge. Either directory can be absent — missing-directory is silent. Use the project directory to:
@@ -206,6 +208,10 @@ Both directories are scanned at session start. **Project skills with the same `n
 - Add skills the plugin doesn't ship (in-house frameworks, project-specific architecture, gameplay system doctrine).
 
 ### File format
+
+Two on-disk shapes are supported. Both go through the same parser.
+
+**Flat layout** — a single markdown file. Good for self-contained guides:
 
 ```markdown
 ---
@@ -220,9 +226,35 @@ subsystem when writing code", not API reference. The agent has `read_header`,
 job is judgment and recipes the engine docs don't surface.
 ```
 
-- Only `name` and `description` are parsed from the frontmatter; both are required. Malformed frontmatter → the file is skipped with a warning in `LogUAgent`.
-- `name` is the slug the agent passes to `invoke_skill`. Match the filename to it.
+**Directory layout** — a `<name>/` directory containing `SKILL.md` plus sibling files (manifest, references, assets). Good for skills that ship structured companions the agent can load on demand:
+
+```
+<skills root>/<name>/
+├── SKILL.md           # same frontmatter + body as the flat form
+├── assets/
+│   └── manifest.yaml  # e.g. an intent/action contract for a runtime bridge
+├── references/
+│   └── *.md           # secondary references the agent can fetch by name
+└── scripts/
+    └── *              # auxiliary scripts
+```
+
+Discovery: any `*.md` directly in the skills root is registered as a flat skill; any immediate subdirectory containing `SKILL.md` is registered as a directory skill. Resources are enumerated recursively from the skill directory (excluding `SKILL.md` itself). The agent receives the resource list in the `invoke_skill` response and can fetch any of them by passing the relative path back as `{ name, resource: "<rel-path>" }`.
+
+- Only `name` and `description` are *required* in the frontmatter. Additional YAML keys (e.g. `license`, `compatibility`, `metadata`, `allowed-tools`) are accepted and silently ignored by the registry today — keep them if a skill carries them, since downstream tooling may consume them.
+- Malformed frontmatter → the file is skipped with a warning in `LogUAgent`.
+- `name` is the slug the agent passes to `invoke_skill`. Match the filename / directory name to it.
 - `description` is what the agent sees in the catalog. Keep it specific — "Networking" is useless, "Authority, ownership, RPCs, RepNotify, common bugs" tells the agent when to load.
+
+### Choosing flat vs directory
+
+Default to flat. Reach for the directory layout when:
+
+- The skill ships a **structured companion** (manifest, schema, intent map) that's useful as a separate fetch rather than inlined into the body. Pulling a 600-line YAML manifest into every body fetch wastes context for the common case where the agent only needs the prose.
+- The skill ships **secondary references** large enough that bundling them into `SKILL.md` would inflate the always-loaded body — e.g. a research report with citations, an upstream changelog, a reference table the agent can grep later.
+- The skill has **auxiliary scripts** (bridge stubs, codegen helpers) that ship alongside the doctrine.
+
+A skill with no companions is dead weight as a directory — keep it flat.
 
 ### Two surfaces — agent-pull and user-push
 
@@ -254,13 +286,15 @@ This split keeps the shipped catalog small and applicable to every UAgent user. 
 
 ### Worked example
 
-The three plugin-shipped skills demonstrate the shape:
+The three plugin-shipped skills demonstrate the flat shape:
 
 - `Resources/Skills/gas.md` — Gameplay Ability System.
 - `Resources/Skills/replication.md` — Networking.
 - `Resources/Skills/enhanced-input.md` — Enhanced Input.
 
 Read one before writing your first.
+
+For the directory shape (`SKILL.md` + companions), see DarkStage's `<ProjectDir>/UAgent/Skills/acfu-orchestrator/` — it packages a doctrine body, an intent/action manifest under `assets/manifest.yaml`, and an upstream-research reference under `references/acfu-reference.md`. The body cites those resources by name so the agent knows when to fetch each via `invoke_skill { name, resource: "<rel-path>" }`.
 
 ### Packaging
 

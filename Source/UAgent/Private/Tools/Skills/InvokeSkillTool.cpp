@@ -23,8 +23,13 @@ public:
         "system context block prepended to each session's first prompt. "
         "Call this BEFORE writing code or invoking other tools on a topic "
         "covered by a skill — the catalog entries are intentionally terse "
-        "and the doctrine lives in the body. Returns {name, description, "
-        "body}.");
+        "and the doctrine lives in the body. "
+        "Returns {name, description, body, resources[]}. For directory-based "
+        "skills (`<name>/SKILL.md` with sibling files), `resources` lists "
+        "extra files (manifest.yaml, references/*.md, …) under the skill "
+        "directory; call this tool again with the same `name` plus a "
+        "`resource` argument set to one of those relative paths to load that "
+        "file's contents instead of the SKILL.md body.");
   }
 
   virtual TSharedPtr<FJsonObject> GetInputSchema() const override {
@@ -33,7 +38,11 @@ public:
             "properties": {
               "name": {
                 "type": "string",
-                "description": "Skill slug as listed in the available-skills catalog (e.g. 'gas', 'replication')."
+                "description": "Skill slug as listed in the available-skills catalog (e.g. 'gas', 'replication', 'acfu-orchestrator')."
+              },
+              "resource": {
+                "type": "string",
+                "description": "Optional. Relative path (forward-slash) to a sibling file inside a directory-based skill, e.g. 'manifest.yaml' or 'references/acfu-reference.md'. Must be one of the values previously surfaced in the `resources` array. Omit to load the skill body."
               }
             },
             "required": ["name"]
@@ -51,6 +60,10 @@ public:
     if (Name.IsEmpty())
       return FToolResponse::InvalidParams(TEXT("missing 'name'"));
 
+    FString Resource;
+    Params->TryGetStringField(TEXT("resource"), Resource);
+    Resource = Resource.TrimStartAndEnd();
+
     FSkillRegistry &Registry = FSkillRegistry::Get();
     const FSkillEntry *Entry = Registry.Find(Name);
     if (!Entry) {
@@ -66,18 +79,38 @@ public:
           TEXT("Unknown skill '%s'. Available: %s"), *Name, *Available));
     }
 
-    FString Body;
-    if (!Registry.LoadBody(*Entry, Body)) {
-      return FToolResponse::Fail(
-          -32000, FString::Printf(TEXT("Failed to read skill body from %s"),
-                                  *Entry->FilePath));
-    }
-
     TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetStringField(TEXT("name"), Entry->Name);
     Result->SetStringField(TEXT("description"), Entry->Description);
-    Result->SetStringField(TEXT("body"), Body);
     Result->SetBoolField(TEXT("fromProject"), Entry->bFromProject);
+
+    if (Resource.IsEmpty()) {
+      // Body path — load SKILL.md (or the flat .md) and advertise any
+      // sibling resources so the agent knows it can call us again to fetch
+      // them by name.
+      FString Body;
+      if (!Registry.LoadBody(*Entry, Body)) {
+        return FToolResponse::Fail(
+            -32000, FString::Printf(TEXT("Failed to read skill body from %s"),
+                                    *Entry->FilePath));
+      }
+      Result->SetStringField(TEXT("body"), Body);
+
+      TArray<TSharedPtr<FJsonValue>> Resources;
+      Resources.Reserve(Entry->Resources.Num());
+      for (const FString &R : Entry->Resources)
+        Resources.Add(MakeShared<FJsonValueString>(R));
+      Result->SetArrayField(TEXT("resources"), Resources);
+    } else {
+      // Resource path — load the named sibling file. Validation lives in the
+      // registry so the same allowlist logic protects every caller.
+      FString Content, Error;
+      if (!Registry.LoadResource(*Entry, Resource, Content, Error))
+        return FToolResponse::InvalidParams(Error);
+      Result->SetStringField(TEXT("resource"), Resource);
+      Result->SetStringField(TEXT("content"), Content);
+    }
+
     return FToolResponse::Ok(Result);
   }
 };
