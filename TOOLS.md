@@ -85,7 +85,7 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 - **list_level_actors** — List actors in the edited level with class, transform, tags, and components.
 - **get_actor_properties** — Dump an actor's properties as JSON. Default reads from the editor world; pass `pie:true` (with optional `controllerIndex` or `actor`) to read the running player pawn or a named PIE actor for live runtime inspection.
 - **set_actor_property** — Set a property on a placed actor via `FProperty::ImportText`.
-- **spawn_actor** — Place an actor in the edited level from a Blueprint or class; returns its name, label, and path.
+- **spawn_actor** — Place an actor in the edited level from a Blueprint asset path, class name, or script path. Optional `location` / `rotation` (object or `"x,y,z"` string), `label`, and `properties` map (`propertyName` → ImportText, applied after spawn — same form as `set_actor_property`). Returns the new actor's name, label, path, and any failed property writes.
 - **destroy_actor** — Destroy one or more placed actors in the edited level; accepts `actor` or `actors[]` and reports failures per actor.
 - **create_level** — Create a new level asset and open it; optional `template` seeds from an existing level.
 - **set_world_settings** — Update the current level's AWorldSettings (convenience `gameMode` + generic `properties` map).
