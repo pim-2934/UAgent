@@ -45,6 +45,7 @@ void RegisterBuiltinTools(FACPToolRegistry &Registry) {
   Registry.Register(CreateCreateDataAssetTool());
   Registry.Register(CreateCreateInputActionTool());
   Registry.Register(CreateCreateInputMappingContextTool());
+  Registry.Register(CreateEditInputMappingContextTool());
   Registry.Register(CreateDeleteAssetTool());
   Registry.Register(CreateRenameAssetTool());
 
@@ -84,6 +85,9 @@ void RegisterBuiltinTools(FACPToolRegistry &Registry) {
   // Config.
   Registry.Register(CreateReadConfigTool());
   Registry.Register(CreateWriteConfigTool());
+
+  // Skills.
+  Registry.Register(CreateInvokeSkillTool());
 
   // Developer-mode-only tools. Gate-conditional registration so they don't
   // appear in MCP tools/list for external clients (Claude Desktop, Cursor,

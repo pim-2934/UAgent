@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 2,
-	"VersionName": "0.0.2",
+	"Version": 3,
+	"VersionName": "0.0.3",
 	"FriendlyName": "UAgent",
 	"Description": "AI agent for the Unreal Editor",
 	"Category": "AI",
@@ -19,6 +19,20 @@
 			"Name": "UAgent",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "GameplayTagsEditor",
+			"Enabled": true
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
 		}
 	]
 }

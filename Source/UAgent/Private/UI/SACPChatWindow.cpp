@@ -9,6 +9,8 @@
 #include "SACPMentionPicker.h"
 #include "SACPMessageList.h"
 #include "SACPPlanStrip.h"
+#include "Skills/SkillCommands.h"
+#include "Skills/SkillRegistry.h"
 #include "Tools/Common/DeveloperGate.h"
 #include "Tools/Developer/ProposalBroker.h"
 #include "Tools/Session/PermissionBroker.h"
@@ -400,12 +402,19 @@ void SACPChatWindow::RefreshAgentSettings() {
   if (!AgentSettingsContainer.IsValid() || !Client.IsValid())
     return;
 
-  // Slash-command picker stays in sync with the agent's advertised set.
+  // Slash-command picker stays in sync with the agent's advertised set,
+  // merged with UAgent's own local commands (one per registered skill).
   // Re-pushing on every settings change is cheap (small array, list widget
   // only redraws when open) and keeps a runtime available_commands_update
-  // from leaving stale entries in the popup.
+  // from leaving stale entries in the popup. Local commands win on slug
+  // collisions — see TryExpandSkillCommand — but the picker itself just
+  // shows the union; agent entries are kept first so collisions don't hide
+  // the agent's version from the list.
   if (CommandPicker.IsValid()) {
-    CommandPicker->SetCommands(Client->GetAvailableCommands());
+    TArray<UAgent::FAvailableCommand> AllCommands =
+        Client->GetAvailableCommands();
+    AllCommands.Append(UAgent::GetLocalSlashCommands());
+    CommandPicker->SetCommands(AllCommands);
   }
 
   // Wholesale rebuild — agents may legitimately change advertised sets and
@@ -606,8 +615,12 @@ void SACPChatWindow::StartSession() {
   UAgent::FProposalBroker::Get().ResetTurn();
 
   // New session — re-send AGENTS.md on the first prompt so edits between
-  // sessions are picked up.
+  // sessions are picked up. Same flag also gates the skill-catalog injection;
+  // force a skill rescan here so edits to Resources/Skills/*.md or to the
+  // project's UAgent/Skills/*.md show up in the new session without an
+  // editor restart.
   bProjectContextSent = false;
+  UAgent::FSkillRegistry::Get().ForceRescan();
 
   // Drop the previous session's usage counters so the label doesn't show
   // stale numbers while the new session is starting up.
@@ -1105,7 +1118,17 @@ FReply SACPChatWindow::OnSendClicked() {
   if (!IsSendEnabled())
     return FReply::Handled();
 
-  const FString UserText = InputBox->GetText().ToString().TrimStartAndEnd();
+  FString UserText = InputBox->GetText().ToString().TrimStartAndEnd();
+  if (UserText.IsEmpty())
+    return FReply::Handled();
+
+  // Local UAgent slash-command expansion (skills). Runs before any turn
+  // bookkeeping so a bare `/<slug>` with no trailing question falls through
+  // to the same empty-input drop above instead of stamping a turn id and
+  // sending an empty prompt. The expanded body lives in PendingSkillBlocks
+  // until block assembly below, where it lands just before the user text.
+  TArray<UAgent::FContentBlock> PendingSkillBlocks;
+  UAgent::TryExpandSkillCommand(UserText, PendingSkillBlocks);
   if (UserText.IsEmpty())
     return FReply::Handled();
 
@@ -1138,24 +1161,43 @@ FReply SACPChatWindow::OnSendClicked() {
                   /*Index=*/0);
   }
 
-  // Project context — AGENTS.md from the UE5 project root, once per session.
-  // Inserted after the dev-mode policy (which must stay near index 0 to
-  // survive mid-context attention drop) but before per-asset context, so it
-  // frames every later block as "for this project". The flag flips to true
-  // whether or not the file exists — absent AGENTS.md means we silently skip
-  // for the rest of the session rather than stat the disk every turn.
+  // Project context + skill catalog, once per session. Both blocks live after
+  // the dev-mode policy (which stays at index 0 to survive mid-context
+  // attention drop) but before per-asset auto-context, so they frame every
+  // later block as "for this project, with these skills". The gate flips to
+  // true whether or not AGENTS.md exists / any skills are registered — we
+  // don't want to stat the disk every turn just to learn nothing changed.
   if (!bProjectContextSent) {
+    int32 InsertIdx = UAgent::Common::IsDeveloperToolingEnabled() ? 1 : 0;
+
+    // AGENTS.md first — establishes project conventions before skills name
+    // their topics. Absent file is a silent skip.
     const FString AgentsMdPath = FPaths::ProjectDir() / TEXT("AGENTS.md");
     FString AgentsMd;
     if (FFileHelper::LoadFileToString(AgentsMd, *AgentsMdPath)) {
       const FString Wrapped = FString::Printf(
           TEXT("Project context (AGENTS.md):\n\n%s"), *AgentsMd);
-      const int32 InsertIdx =
-          UAgent::Common::IsDeveloperToolingEnabled() ? 1 : 0;
       Blocks.Insert(UAgent::FContentBlock::MakeText(Wrapped), InsertIdx);
+      ++InsertIdx;
     }
+
+    // Skill catalog — name + one-line description per skill, plus an
+    // instruction telling the agent to call invoke_skill before acting on
+    // any topic in the list. Empty when zero skills registered.
+    const FString SkillCatalog =
+        UAgent::FSkillRegistry::Get().BuildCatalogBlock();
+    if (!SkillCatalog.IsEmpty()) {
+      Blocks.Insert(UAgent::FContentBlock::MakeText(SkillCatalog), InsertIdx);
+    }
+
     bProjectContextSent = true;
   }
+
+  // User-loaded skill body (from /<slug> expansion) goes immediately before
+  // the user text — closest to the question so the doctrine is the freshest
+  // framing in attention. Empty when no /<slug> matched this turn.
+  for (UAgent::FContentBlock &Block : PendingSkillBlocks)
+    Blocks.Add(MoveTemp(Block));
 
   Blocks.Add(UAgent::FContentBlock::MakeText(UserText));
 

@@ -49,6 +49,7 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 - **create_data_asset** — Create a `UDataAsset` / `UPrimaryDataAsset` of a given subclass; optional ImportText property map.
 - **create_input_action** — Create an Enhanced Input `UInputAction` with a given value type (bool / axis1d / axis2d / axis3d).
 - **create_input_mapping_context** — Create a `UInputMappingContext`; optional `mappings` array of `{action, key}` pairs.
+- **edit_input_mapping_context** — Edit an existing `UInputMappingContext`: `remove` mappings by `{action, key}`, `removeAllForAction` to drop every binding for an action, or `add` new mappings with optional `triggers`/`modifiers` (subclass paths instantiated with default values). Use when re-creating the IMC would lose per-entry triggers/modifiers, or when you need to rewire a binding inside a plugin-shipped IMC.
 - **delete_asset** — Delete an asset by path. Destructive — incoming references aren't checked.
 - **rename_asset** — Rename or move an asset; incoming references are updated.
 
@@ -84,7 +85,7 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 - **list_level_actors** — List actors in the edited level with class, transform, tags, and components.
 - **get_actor_properties** — Dump an actor's properties as JSON. Default reads from the editor world; pass `pie:true` (with optional `controllerIndex` or `actor`) to read the running player pawn or a named PIE actor for live runtime inspection.
 - **set_actor_property** — Set a property on a placed actor via `FProperty::ImportText`.
-- **spawn_actor** — Place an actor in the edited level from a Blueprint or class; returns its name, label, and path.
+- **spawn_actor** — Place an actor in the edited level from a Blueprint asset path, class name, or script path. Optional `location` / `rotation` (object or `"x,y,z"` string), `label`, and `properties` map (`propertyName` → ImportText, applied after spawn — same form as `set_actor_property`). Returns the new actor's name, label, path, and any failed property writes.
 - **destroy_actor** — Destroy one or more placed actors in the edited level; accepts `actor` or `actors[]` and reports failures per actor.
 - **create_level** — Create a new level asset and open it; optional `template` seeds from an existing level.
 - **set_world_settings** — Update the current level's AWorldSettings (convenience `gameMode` + generic `properties` map).
@@ -93,6 +94,10 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 
 - **read_config** — Read a config entry via `GConfig`.
 - **write_config** — Write a config entry via `GConfig` (project-dir files only).
+
+## Skills
+
+- **invoke_skill** — Load the full body of a named UAgent skill — opinionated markdown guides for UE5 subsystems (GAS, Replication, Enhanced Input) or project-specific topics. The available skills are listed in the system context block prepended to each session's first prompt. Default call (`{name}`) returns `{name, description, body, resources[], fromProject}`; for directory-based skills, `resources[]` enumerates sibling files (manifest, references, …) under the skill directory. Pass `{name, resource: "<rel-path>"}` to load one of those files instead, returning `{name, description, resource, content, fromProject}`. Plugin-shipped skills live in `Resources/Skills/` (flat `.md` or `<name>/SKILL.md` directories) and cover core UE5 only; per-project skills under `<ProjectDir>/UAgent/Skills/` extend with third-party-framework or in-house guides (and can override shipped skills by name). See [Adding a skill](CONTRIBUTING.md#adding-a-skill) in CONTRIBUTING.md.
 
 ## Developer (gated)
 

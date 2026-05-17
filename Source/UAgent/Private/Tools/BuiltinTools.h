@@ -61,6 +61,7 @@ TSharedRef<IACPTool> CreateCreateMaterialInstanceTool();
 TSharedRef<IACPTool> CreateCreateDataAssetTool();
 TSharedRef<IACPTool> CreateCreateInputActionTool();
 TSharedRef<IACPTool> CreateCreateInputMappingContextTool();
+TSharedRef<IACPTool> CreateEditInputMappingContextTool();
 TSharedRef<IACPTool> CreateDeleteAssetTool();
 TSharedRef<IACPTool> CreateRenameAssetTool();
 
@@ -104,4 +105,8 @@ TSharedRef<IACPTool> CreateWriteConfigTool();
 // Developer (gated on bDeveloperMode + writable plugin Source dir; see
 // Tools/Common/DeveloperGate.h).
 TSharedRef<IACPTool> CreateProposeMissingToolTool();
+
+// Skills — load author-written markdown recipes shipped with the plugin
+// (Resources/Skills/*.md) or per-project (<ProjectDir>/UAgent/Skills/*.md).
+TSharedRef<IACPTool> CreateInvokeSkillTool();
 } // namespace UAgent
