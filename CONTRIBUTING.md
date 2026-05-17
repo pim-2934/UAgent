@@ -180,6 +180,92 @@ Worked example: `Source/UAgent/Private/Tools/Blueprint/SetComponentMaterialTool.
 
 Do not try to route this through `FBlueprintEditorUtils::PostEditChangeBlueprintActors` or a compile-flag: the former is too coarse (actor-level `PostEditChange`, not property-level), and no compile flag exists that forces template→instance sync for already-placed actors.
 
+## Adding a skill
+
+A **skill** is an opinionated markdown guide for a UE5 subsystem or framework — GAS, Replication, Enhanced Input, Ascent Combat Framework, in-house combat code, etc. The agent loads a skill's body on demand via the `invoke_skill` tool when the user's request touches a topic in the catalog.
+
+### Tool vs skill — which to write
+
+The choice mirrors the [Tool shape: intent over API](#tool-shape-intent-over-api) discussion above:
+
+- **Tool** — one coherent engine action, typed, testable. `create_input_action`, `set_component_material`. The agent's intent is "do this single thing."
+- **Skill** — doctrine, multi-step recipe, judgment calls. "When to put the ASC on PlayerState vs Character." "How replication ownership differs from authority." The agent's intent is "I need to understand this subsystem before acting."
+
+A skill that's a thin alias for one tool is dead weight. A tool that has to enumerate when-to-use-which-flavor in its description is probably hiding a skill. When in doubt: if the content reads like a *how-to-think guide*, it's a skill; if it reads like *"call this with these args"*, it's a tool.
+
+### File locations
+
+```
+<plugin root>/Resources/Skills/*.md       # ships with UAgent — read-only at runtime
+<ProjectDir>/UAgent/Skills/*.md           # per-project; overrides + adds
+```
+
+Both directories are scanned at session start. **Project skills with the same `name` as a plugin skill override the plugin entry** (an info-level log records the override). Different names merge. Either directory can be absent — missing-directory is silent. Use the project directory to:
+
+- Override a shipped skill with project-specific conventions (e.g. your project uses a custom ASC layout that differs from `gas.md`'s recommendation).
+- Add skills the plugin doesn't ship (in-house frameworks, project-specific architecture, gameplay system doctrine).
+
+### File format
+
+```markdown
+---
+name: kebab-case-slug
+description: One-line summary — the agent reads this in the always-prepended catalog
+---
+
+# Body
+Opinionated guide. Aim for ~200–500 lines. Frame as "how to think about this
+subsystem when writing code", not API reference. The agent has `read_header`,
+`get_class_info`, and `find_function` to verify exact API surface; the skill's
+job is judgment and recipes the engine docs don't surface.
+```
+
+- Only `name` and `description` are parsed from the frontmatter; both are required. Malformed frontmatter → the file is skipped with a warning in `LogUAgent`.
+- `name` is the slug the agent passes to `invoke_skill`. Match the filename to it.
+- `description` is what the agent sees in the catalog. Keep it specific — "Networking" is useless, "Authority, ownership, RPCs, RepNotify, common bugs" tells the agent when to load.
+
+### Two surfaces — agent-pull and user-push
+
+Each registered skill is reachable two ways, and both share the same registry + the same markdown body:
+
+- **Agent-pull** — the catalog block prepended to the first prompt names the skill; the agent decides whether to call `invoke_skill` based on the request. Optimised for "agent autonomously notices the topic."
+- **User-push** — typing `/<skill-name>` in the chat input expands at send-time to a framed skill-body block injected just before your message. Local skill commands are merged into the same slash-command picker that lists the backing agent's commands, so `/` shows the union. Optimised for "user already knows what subsystem they're touching" — saves the agent a round-trip and guarantees the doctrine is loaded.
+
+Collision rule: if a skill slug matches a command the agent advertises, the local expansion wins and the agent never receives the literal `/<slug>` token (see `TryExpandSkillCommand` in `Skills/SkillCommands.cpp`). Pick skill slugs that don't collide with common agent commands (`/plan`, `/compact`, `/init`, `/clear`) just to be safe.
+
+### Reload semantics
+
+Skills are scanned on first access and re-scanned on **every new session** (`SACPChatWindow::StartSession` calls `FSkillRegistry::ForceRescan`). Edits to skill files between sessions are picked up without restarting the editor; edits *within* a session are not (the catalog block is already in context, and slash-command additions don't surface in the picker until it's repopulated on the next session).
+
+### Authoring guidance
+
+- **Open with when to use this skill.** First two sentences should let the agent decide whether to call `invoke_skill` for this topic.
+- **Be opinionated.** "Put the ASC on PlayerState for players" beats "the ASC can live on several actors." Doctrine is the whole reason a skill exists.
+- **Call out common pitfalls explicitly.** A numbered list near the end of "bugs that look like X but are actually Y" is high-leverage — the agent uses it to debug, not just to write new code.
+- **Reference UAgent tools by name** when a tool naturally implements part of the doctrine (e.g. `create_gameplay_tag` from `gas.md`).
+- **Tell the agent how to verify.** Engine APIs evolve. Skills should name the right concepts and point to `read_header` / `get_class_info` for parameter-level confirmation, not promise specific function signatures that may drift.
+- **Say when *not* to use the subsystem.** A "skip this skill" closing section prevents the agent from over-applying.
+
+### Scope — what ships with the plugin vs what stays in your project
+
+Plugin-shipped skills cover **core UE5** subsystems: things any UE5 developer might touch, with no third-party dependencies. Third-party / marketplace framework doctrine (combat frameworks, inventory systems, GAS-helper plugins, etc.) **does not ship with UAgent** — it goes in `<ProjectDir>/UAgent/Skills/` instead. The same applies to project-specific or in-house systems.
+
+This split keeps the shipped catalog small and applicable to every UAgent user. A skill for a framework that's only relevant if you bought a specific marketplace plugin is dead weight in everyone else's session.
+
+### Worked example
+
+The three plugin-shipped skills demonstrate the shape:
+
+- `Resources/Skills/gas.md` — Gameplay Ability System.
+- `Resources/Skills/replication.md` — Networking.
+- `Resources/Skills/enhanced-input.md` — Enhanced Input.
+
+Read one before writing your first.
+
+### Packaging
+
+Skills are plain `.md` files under `Resources/`. The UE5 plugin packager includes `Resources/` automatically — no `.uplugin` or `Build.cs` changes are needed. Per-project skills under `<ProjectDir>/UAgent/Skills/` are read at runtime and don't ship with the plugin.
+
 ## Developer mode — `propose_missing_tool`
 
 When `UUAgentSettings::bDeveloperMode` is on **and** the plugin's `Source/UAgent/Private/Tools/` directory is writable, the registry exposes one extra tool — `propose_missing_tool` — and prepends a standing instruction to every prompt asking the agent to call it whenever the registered tool set doesn't cover the user's intent. Both surfaces are gated at registration time (one site in `BuiltinTools.cpp`, one site in `SACPChatWindow::OnSendClicked`); when the gate is closed, neither MCP `tools/list` nor the prompt blocks change. Toggling the setting requires an editor restart.

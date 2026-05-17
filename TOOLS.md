@@ -94,6 +94,10 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 - **read_config** — Read a config entry via `GConfig`.
 - **write_config** — Write a config entry via `GConfig` (project-dir files only).
 
+## Skills
+
+- **invoke_skill** — Load the full body of a named UAgent skill — opinionated markdown guides for UE5 subsystems (GAS, Replication, Enhanced Input). The available skills are listed in the system context block prepended to each session's first prompt; this tool returns `{name, description, body}`. Plugin-shipped skills live in `Resources/Skills/*.md` and cover core UE5 only; per-project skills under `<ProjectDir>/UAgent/Skills/*.md` extend with third-party-framework or in-house guides (and can override shipped skills by name). See [Adding a skill](CONTRIBUTING.md#adding-a-skill) in CONTRIBUTING.md.
+
 ## Developer (gated)
 
 Only registered when **both** `UUAgentSettings::bDeveloperMode` is true *and* the plugin's `Source/UAgent/Private/Tools/` directory is writable. Off by default. Toggling the setting requires an editor restart to take effect — tool registration runs once in `StartupModule`.
