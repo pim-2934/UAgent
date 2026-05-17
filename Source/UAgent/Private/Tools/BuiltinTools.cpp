@@ -45,6 +45,7 @@ void RegisterBuiltinTools(FACPToolRegistry &Registry) {
   Registry.Register(CreateCreateDataAssetTool());
   Registry.Register(CreateCreateInputActionTool());
   Registry.Register(CreateCreateInputMappingContextTool());
+  Registry.Register(CreateEditInputMappingContextTool());
   Registry.Register(CreateDeleteAssetTool());
   Registry.Register(CreateRenameAssetTool());
 

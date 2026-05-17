@@ -61,6 +61,7 @@ TSharedRef<IACPTool> CreateCreateMaterialInstanceTool();
 TSharedRef<IACPTool> CreateCreateDataAssetTool();
 TSharedRef<IACPTool> CreateCreateInputActionTool();
 TSharedRef<IACPTool> CreateCreateInputMappingContextTool();
+TSharedRef<IACPTool> CreateEditInputMappingContextTool();
 TSharedRef<IACPTool> CreateDeleteAssetTool();
 TSharedRef<IACPTool> CreateRenameAssetTool();
 

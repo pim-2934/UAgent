@@ -49,6 +49,7 @@ Each tool classifies itself as read-only or mutating. When the agent asks for pe
 - **create_data_asset** — Create a `UDataAsset` / `UPrimaryDataAsset` of a given subclass; optional ImportText property map.
 - **create_input_action** — Create an Enhanced Input `UInputAction` with a given value type (bool / axis1d / axis2d / axis3d).
 - **create_input_mapping_context** — Create a `UInputMappingContext`; optional `mappings` array of `{action, key}` pairs.
+- **edit_input_mapping_context** — Edit an existing `UInputMappingContext`: `remove` mappings by `{action, key}`, `removeAllForAction` to drop every binding for an action, or `add` new mappings with optional `triggers`/`modifiers` (subclass paths instantiated with default values). Use when re-creating the IMC would lose per-entry triggers/modifiers, or when you need to rewire a binding inside a plugin-shipped IMC.
 - **delete_asset** — Delete an asset by path. Destructive — incoming references aren't checked.
 - **rename_asset** — Rename or move an asset; incoming references are updated.
 

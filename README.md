@@ -31,7 +31,7 @@ https://github.com/user-attachments/assets/1e08db26-0494-4bf5-b88e-bbbe2756e5bf
 ### Prerequisites
 
 - Unreal Engine — tested on 5.7.
-- A backing agent — an ACP-compatible CLI such as the Claude CLI (recommended), the Codex CLI, the Gemini CLI, or Zed's agent. See [Agent](#agent) below.
+- A backing agent — an ACP-compatible CLI such as the Claude CLI, the Codex CLI, the Gemini CLI, or Zed's agent. See [Agent](#agent) below.
 
 ### Install the plugin
 
@@ -51,7 +51,7 @@ Create the `Plugins` directory next to your `.uproject` if it doesn't exist yet.
 
 You need an ACP-compatible agent backend. The plugin is currently tested with the Claude CLI, but any ACP bridge will do — Gemini CLI, Zed's agent, or a custom one in any language.
 
-#### Claude CLI (recommended)
+#### Claude CLI
 
 Install both components per their official instructions:
 
